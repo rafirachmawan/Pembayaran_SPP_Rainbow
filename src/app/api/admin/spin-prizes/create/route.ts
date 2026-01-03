@@ -19,15 +19,33 @@ export async function POST(req: Request) {
   const value = Number(body.value || 0);
   const quota = Number(body.quota || 0);
 
+  // ✅ NEW: weight
+  const weight = Number(body.weight ?? 1);
+
   if (!label)
     return NextResponse.json({ error: "Label wajib" }, { status: 400 });
   if (!["FIXED", "PERCENT", "NONE"].includes(type)) {
     return NextResponse.json({ error: "Type invalid" }, { status: 400 });
   }
+  if (!Number.isFinite(weight) || weight < 0) {
+    return NextResponse.json(
+      { error: "Weight harus angka >= 0" },
+      { status: 400 }
+    );
+  }
 
   const { data, error } = await supabaseAdmin
     .from("spin_prizes")
-    .insert({ period, label, type, value, quota, used: 0, active: true })
+    .insert({
+      period,
+      label,
+      type,
+      value,
+      quota,
+      used: 0,
+      active: true,
+      weight, // ✅ simpan
+    })
     .select("*")
     .single();
 

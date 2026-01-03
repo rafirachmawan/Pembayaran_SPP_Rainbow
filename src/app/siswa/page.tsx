@@ -34,9 +34,12 @@ type Prize = {
   value: number;
   quota: number;
   used: number;
+  weight?: number;
 };
 
 export default function SiswaPage() {
+  const [mounted, setMounted] = useState(false);
+
   const [data, setData] = useState<any>(null);
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(
@@ -51,7 +54,7 @@ export default function SiswaPage() {
   const segCount = Math.max(1, prizes.length);
   const segAngle = 360 / segCount;
 
-  // buat conic-gradient otomatis sesuai jumlah hadiah
+  // conic-gradient otomatis
   const wheelBg = useMemo(() => {
     const colors = [
       "#2563eb",
@@ -86,10 +89,7 @@ export default function SiswaPage() {
   async function loadPrizes() {
     const res = await fetch("/api/siswa/spin/prizes");
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      // diam aja, biar siswa tetap bisa lihat invoice
-      return;
-    }
+    if (!res.ok) return;
     setPrizes(Array.isArray(d.prizes) ? d.prizes : []);
   }
 
@@ -102,7 +102,12 @@ export default function SiswaPage() {
     location.href = "/login";
   }
 
-  // animasi spin (visual), lalu panggil backend untuk hasil final
+  /**
+   * ✅ FIX UTAMA:
+   * 1) minta hasil resmi dulu ke server (weighted)
+   * 2) server balikin prize_id
+   * 3) wheel diputar menuju index prize itu (bukan random visual)
+   */
   async function spin() {
     setMsg(null);
     if (spinning) return;
@@ -116,27 +121,7 @@ export default function SiswaPage() {
 
     setSpinning(true);
 
-    // tentukan target index visual (random)
-    const targetIndex = Math.floor(Math.random() * segCount);
-
-    // agar pointer “nunjuk ke segmen”, kita putar wheel sehingga segmen target berhenti di atas.
-    // pointer ada di posisi 12 o'clock (atas). Center segmen = (index+0.5)*segAngle
-    const targetCenter = (targetIndex + 0.5) * segAngle;
-
-    // rotasi akhir: beberapa putaran + geser supaya targetCenter berada di 0deg (atas)
-    const extraSpins = 5; // makin besar makin "wah"
-    const finalRot = extraSpins * 360 + (360 - targetCenter);
-
-    // set rotasi dari posisi sekarang ke posisi final (tambah supaya terasa natural)
-    const base = rot % 360;
-    const next = rot - base + finalRot;
-
-    setRot(next);
-
-    // tunggu animasi selesai (sinkron dengan CSS durasi)
-    await new Promise((r) => setTimeout(r, 4200));
-
-    // panggil backend untuk hasil resmi
+    // 1) panggil backend dulu untuk hasil resmi
     const res = await fetch("/api/siswa/spin", { method: "POST" });
     const d = await res.json().catch(() => ({}));
 
@@ -146,18 +131,48 @@ export default function SiswaPage() {
       return setMsg({ type: "err", text: d?.error || "Spin gagal" });
     }
 
-    setMsg({ type: "ok", text: `Kamu dapat: ${d.prize.label}` });
+    const prizeId = String(d?.prize?.id || d?.prize_id || "");
+    const prizeLabel = String(d?.prize?.label || "Hadiah");
+
+    // 2) cari index hadiah di array prizes (yang ditampilkan)
+    let targetIndex = prizes.findIndex((p) => p.id === prizeId);
+
+    // fallback: kalau hadiah sudah berubah (misal admin edit),
+    // tetap jalan pakai random visual biar nggak blank
+    if (targetIndex < 0) {
+      targetIndex = Math.floor(Math.random() * segCount);
+    }
+
+    // 3) putar wheel menuju targetIndex
+    const targetCenter = (targetIndex + 0.5) * segAngle;
+    const extraSpins = 5;
+    const finalRot = extraSpins * 360 + (360 - targetCenter);
+
+    const base = rot % 360;
+    const next = rot - base + finalRot;
+    setRot(next);
+
+    // tunggu animasi selesai (samakan dengan durasi)
+    await new Promise((r) => setTimeout(r, 4200));
+
+    setMsg({ type: "ok", text: `Kamu dapat: ${prizeLabel}` });
+
+    // refresh invoice + prizes (used/quota berubah)
     await refreshAll();
     setSpinning(false);
   }
 
   useEffect(() => {
+    setMounted(true);
     refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const inv = data?.invoice;
   const period = data?.period;
+
+  // hindari hydration mismatch
+  if (!mounted) return null;
 
   return (
     <>
@@ -240,7 +255,7 @@ export default function SiswaPage() {
                   </div>
                   <div className="small">
                     Lucky Spin hanya bisa <b>1x</b> dan hanya sebelum tanggal{" "}
-                    <b>{period.spin_deadline_day}</b>.
+                    <b>{period?.spin_deadline_day}</b>.
                   </div>
                   <div className="small" style={{ marginTop: 8 }}>
                     Jika hadiah habis (kuota), admin perlu tambah hadiah lagi.

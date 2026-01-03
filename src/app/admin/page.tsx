@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+
+// ✅ Logo dari src/assets/rainbow.jpeg
+import rainbowLogo from "../../assets/rainbow.jpeg";
 
 type Prize = {
   id: string;
@@ -10,7 +14,18 @@ type Prize = {
   quota: number;
   used: number;
   active: boolean;
+  weight?: number; // ✅ bobot peluang (semakin besar semakin sering keluar)
   created_at?: string;
+};
+
+type Student = {
+  id?: string;
+  nis: string;
+  nama: string;
+  kelas: string;
+  username?: string;
+  created_at?: string;
+  is_active?: boolean;
 };
 
 function formatPeriode(yyyyMM?: string) {
@@ -44,7 +59,79 @@ function formatHadiah(p: Prize) {
   return `Rp ${Number(p.value).toLocaleString("id-ID")}`;
 }
 
+/** ✅ 4 digit: 0001, 0002, ... */
+function pad4(n: number) {
+  return String(n).padStart(4, "0");
+}
+
+/**
+ * ✅ hitung NIS berikutnya:
+ * - hanya hitung NIS numeric 1..9999 (max 4 digit)
+ * - abaikan NIS lama yang 5-6 digit (misal 123457)
+ * - jika belum ada NIS 4 digit, mulai 0001
+ */
+function calcNextNis(students: Student[]) {
+  let max = 0;
+
+  for (const s of students || []) {
+    const raw = String(s.nis ?? "").trim();
+    if (!raw) continue;
+
+    if (/^\d+$/.test(raw)) {
+      const v = Number(raw);
+      if (Number.isFinite(v) && v >= 1 && v <= 9999) {
+        if (v > max) max = v;
+      }
+    }
+  }
+
+  return pad4(max + 1);
+}
+
+/**
+ * ✅ hitung peluang keluar per hadiah (berdasarkan weight)
+ * Konsep:
+ * - hadiah dianggap eligible jika: active && sisa>0 && weight>0
+ * - peluang (%) = weight / totalWeight * 100
+ * Catatan: kuota tetap pembatas (kalau sisa=0, peluang 0%)
+ */
+function buildChanceMap(prizes: Prize[]) {
+  const eligible = (prizes || [])
+    .map((p) => {
+      const w = Number(p.weight ?? 1);
+      const sisa = Math.max(0, Number(p.quota) - Number(p.used));
+      return { ...p, _w: Number.isFinite(w) ? w : 1, _sisa: sisa };
+    })
+    .filter((p) => !!p.active && p._sisa > 0 && p._w > 0);
+
+  const totalW = eligible.reduce((a, p) => a + p._w, 0);
+
+  const map: Record<string, number> = {};
+  for (const p of prizes || []) {
+    map[p.id] = 0;
+  }
+
+  if (totalW <= 0) return { map, totalW };
+
+  for (const p of eligible) {
+    map[p.id] = (p._w / totalW) * 100;
+  }
+
+  return { map, totalW };
+}
+
+type SectionKey =
+  | "dashboard"
+  | "setSpp"
+  | "addPrize"
+  | "listPrize"
+  | "addStudent"
+  | "listStudent";
+
 export default function AdminPage() {
+  // ✅ cegah hydration mismatch
+  const [mounted, setMounted] = useState(false);
+
   const [period, setPeriod] = useState("2025-12");
   const [amount, setAmount] = useState(200000);
   const [deadline, setDeadline] = useState(11);
@@ -54,22 +141,34 @@ export default function AdminPage() {
   const [type, setType] = useState<"FIXED" | "PERCENT" | "NONE">("FIXED");
   const [value, setValue] = useState(10000);
   const [quota, setQuota] = useState(50);
+  const [weight, setWeight] = useState(1); // ✅ bobot peluang hadiah (default 1)
 
   // list hadiah
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [loadingList, setLoadingList] = useState(false);
 
   // tambah siswa
-  const [nis, setNis] = useState("123456");
+  const [nis, setNis] = useState("0001"); // ✅ default 0001
   const [nama, setNama] = useState("Nama Siswa");
   const [kelas, setKelas] = useState("X-A");
   const [pass, setPass] = useState("123456");
+
+  // list siswa
+  const [students, setStudents] = useState<Student[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [studentQ, setStudentQ] = useState("");
 
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(
     null
   );
 
+  const [activeSection, setActiveSection] = useState<SectionKey>("dashboard");
+
   const periodLabel = useMemo(() => formatPeriode(period), [period]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -102,6 +201,7 @@ export default function AdminPage() {
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
       return setMsg({ type: "err", text: d?.error || "Gagal set SPP" });
+
     setMsg({
       type: "ok",
       text: `SPP aktif: ${formatPeriode(d.period.period)} • Rp ${Number(
@@ -116,7 +216,8 @@ export default function AdminPage() {
     const res = await fetch("/api/admin/spin-prizes/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ period, label, type, value, quota }),
+      // ✅ kirim weight ke backend
+      body: JSON.stringify({ period, label, type, value, quota, weight }),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
@@ -133,9 +234,7 @@ export default function AdminPage() {
     setMsg(null);
     const res = await fetch(
       `/api/admin/spin-prizes/delete?id=${encodeURIComponent(id)}`,
-      {
-        method: "DELETE",
-      }
+      { method: "DELETE" }
     );
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
@@ -143,6 +242,22 @@ export default function AdminPage() {
 
     setMsg({ type: "ok", text: "Hadiah berhasil dihapus" });
     await loadPrizes();
+  }
+
+  async function loadStudents() {
+    setLoadingStudents(true);
+    const res = await fetch(
+      `/api/admin/students/list?q=${encodeURIComponent(studentQ)}`
+    );
+    const d = await res.json().catch(() => ({}));
+    setLoadingStudents(false);
+
+    if (!res.ok) {
+      setMsg({ type: "err", text: d?.error || "Gagal ambil list siswa" });
+      setStudents([]);
+      return;
+    }
+    setStudents(Array.isArray(d.students) ? d.students : []);
   }
 
   async function addStudent() {
@@ -155,17 +270,36 @@ export default function AdminPage() {
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
       return setMsg({ type: "err", text: d?.error || "Gagal tambah siswa" });
+
     setMsg({
       type: "ok",
       text: `Akun siswa dibuat: ${d.username} / ${d.password}`,
     });
+
+    await loadStudents(); // ✅ refresh biar langsung muncul & nis naik
   }
 
-  // reload list saat period berubah
+  // reload list hadiah saat period berubah
   useEffect(() => {
     loadPrizes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period]);
+
+  // auto-load siswa saat buka addStudent / listStudent
+  useEffect(() => {
+    if (activeSection === "addStudent" || activeSection === "listStudent") {
+      loadStudents();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
+
+  // ✅ auto set NIS 0001.. saat students berubah (khusus addStudent)
+  useEffect(() => {
+    if (activeSection !== "addStudent") return;
+    const next = calcNextNis(students);
+    setNis(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, activeSection]);
 
   const totalHadiah = prizes.length;
   const totalSisa = prizes.reduce(
@@ -173,280 +307,1049 @@ export default function AdminPage() {
     0
   );
 
+  // ✅ Map peluang (%) per hadiah berdasarkan weight
+  const chanceInfo = useMemo(() => buildChanceMap(prizes), [prizes]);
+  const chanceMap = chanceInfo.map;
+
+  function go(section: SectionKey) {
+    setActiveSection(section);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0 });
+  }
+
+  const menu = [
+    { key: "dashboard" as const, label: "Dashboard" },
+    { key: "setSpp" as const, label: "Set SPP" },
+    { key: "addPrize" as const, label: "Tambah Hadiah" },
+    { key: "listPrize" as const, label: "List Hadiah" },
+    { key: "addStudent" as const, label: "Tambah Siswa" },
+    { key: "listStudent" as const, label: "List Siswa" },
+  ];
+
+  // ✅ mencegah mismatch: render hanya setelah mounted
+  if (!mounted) return null;
+
   return (
     <>
-      <div className="topbar">
-        <div className="topbarInner">
-          <div className="brand">
-            <div className="logo" />
-            <div className="brandTitle">
-              <b>SPP Rainbow</b>
-              <span>Super Admin</span>
-            </div>
-          </div>
-          <div className="actions">
-            <a className="btn" href="/login">
-              Login
-            </a>
-            <button className="btn btnDanger" onClick={logout}>
-              Logout
-            </button>
-          </div>
-        </div>
-      </div>
+      <style jsx global>{`
+        :root {
+          --bg: #f6f8fc;
+          --card: #ffffff;
+          --text: #0f172a;
+          --muted: #64748b;
+          --line: rgba(15, 23, 42, 0.08);
 
-      <div className="container">
-        <div className="card">
-          <h1 className="h1">Dashboard Super Admin</h1>
-          <p className="p">
-            Kelola SPP period aktif dan Lucky Spin (tambah & hapus hadiah).
-          </p>
+          --primary: #2563eb;
+          --primary-2: #1d4ed8;
 
-          {msg ? (
-            <div
-              className={
-                msg.type === "ok" ? "notice noticeOk" : "notice noticeErr"
-              }
-            >
-              {msg.type === "ok" ? "✅" : "⚠️"} {msg.text}
-            </div>
-          ) : null}
+          --danger: #ef4444;
+          --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+          --radius: 16px;
+          --radius-sm: 12px;
+        }
 
-          <div className="hr" />
+        html,
+        body {
+          background: var(--bg);
+          color: var(--text);
+        }
 
-          <div className="kpis">
-            <div className="kpi">
-              <div className="label">Period</div>
-              <div className="value">{periodLabel}</div>
-            </div>
-            <div className="kpi">
-              <div className="label">Total Hadiah</div>
-              <div className="value">{totalHadiah}</div>
-            </div>
-            <div className="kpi">
-              <div className="label">Sisa Kuota</div>
-              <div className="value">{totalSisa}</div>
-            </div>
-          </div>
-        </div>
+        * {
+          box-sizing: border-box;
+        }
 
-        <div style={{ height: 14 }} />
+        body {
+          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+            "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+          letter-spacing: -0.01em;
+        }
 
-        <div className="grid2">
-          <section className="card">
-            <div className="sectionTitle">
-              <h2>Set SPP Period Aktif</h2>
-              <span className="badge">Wajib</span>
-            </div>
+        .appShell {
+          min-height: 100vh;
+          background: var(--bg);
+        }
 
-            <div className="form">
-              <div className="field">
-                <label>Period (YYYY-MM)</label>
-                <input
-                  value={period}
-                  onChange={(e) => setPeriod(e.target.value)}
-                  placeholder="2025-12"
+        .appHeader {
+          position: sticky;
+          top: 0;
+          z-index: 40;
+          background: rgba(246, 248, 252, 0.85);
+          backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--line);
+        }
+
+        .headerInner {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: 14px 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .brandRow {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 240px;
+        }
+
+        .logoWrap {
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+          overflow: hidden;
+          background: #fff;
+          box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+          border: 1px solid var(--line);
+          flex: 0 0 auto;
+        }
+
+        .brandText {
+          display: flex;
+          flex-direction: column;
+          line-height: 1.05;
+        }
+
+        .brandText b {
+          font-size: 15.5px;
+          letter-spacing: -0.02em;
+        }
+
+        .brandText span {
+          font-size: 12px;
+          color: var(--muted);
+          margin-top: 3px;
+        }
+
+        .headerRight {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .primaryBtn,
+        .dangerBtn {
+          height: 40px;
+          padding: 0 12px;
+          border-radius: 12px;
+          border: 1px solid var(--line);
+          background: #fff;
+          color: var(--text);
+          font-size: 13px;
+          font-weight: 600;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+        }
+
+        .primaryBtn {
+          background: var(--primary);
+          border-color: rgba(37, 99, 235, 0.25);
+          color: #fff;
+        }
+        .primaryBtn:hover {
+          background: var(--primary-2);
+        }
+
+        .dangerBtn {
+          background: #fff;
+          border-color: rgba(239, 68, 68, 0.35);
+          color: var(--danger);
+        }
+        .dangerBtn:hover {
+          box-shadow: 0 10px 24px rgba(239, 68, 68, 0.12);
+        }
+
+        .layout {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: 16px;
+          display: grid;
+          grid-template-columns: 320px 1fr;
+          gap: 16px;
+          align-items: start;
+        }
+
+        .sidebar {
+          position: sticky;
+          top: 76px;
+          border-radius: var(--radius);
+          background: var(--card);
+          border: 1px solid var(--line);
+          box-shadow: var(--shadow);
+          overflow: hidden;
+        }
+
+        .sidebarTop {
+          padding: 16px;
+          border-bottom: 1px solid var(--line);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .sidebarTop h3 {
+          margin: 0;
+          font-size: 14px;
+          letter-spacing: -0.01em;
+        }
+
+        .pill {
+          display: inline-flex;
+          align-items: center;
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: rgba(37, 99, 235, 0.08);
+          color: rgba(37, 99, 235, 1);
+          border: 1px solid rgba(37, 99, 235, 0.12);
+          font-size: 12px;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+
+        .sideMenu {
+          padding: 14px;
+          display: grid;
+          gap: 10px;
+        }
+
+        .menuBtn {
+          height: 44px;
+          border-radius: 14px;
+          border: 1px solid var(--line);
+          background: #fff;
+          color: var(--text);
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          text-align: left;
+          padding: 0 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .menuBtn:hover {
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+        }
+
+        .menuBtnActive {
+          background: rgba(37, 99, 235, 0.1);
+          border-color: rgba(37, 99, 235, 0.24);
+          color: rgba(29, 78, 216, 1);
+        }
+
+        .content {
+          min-width: 0;
+          display: grid;
+          gap: 14px;
+        }
+
+        .card {
+          background: var(--card);
+          border: 1px solid var(--line);
+          border-radius: var(--radius);
+          box-shadow: var(--shadow);
+          padding: 18px;
+        }
+
+        .titleRow {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+
+        .titleRow h1,
+        .titleRow h2 {
+          margin: 0;
+          letter-spacing: -0.02em;
+        }
+
+        .titleRow h1 {
+          font-size: 22px;
+        }
+        .titleRow h2 {
+          font-size: 18px;
+        }
+
+        .sub {
+          color: var(--muted);
+          margin: 6px 0 0;
+          font-size: 13.5px;
+          line-height: 1.5;
+        }
+
+        .divider {
+          height: 1px;
+          background: var(--line);
+          margin: 14px 0;
+        }
+
+        .kpis {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .kpiBox {
+          border: 1px solid var(--line);
+          border-radius: var(--radius-sm);
+          padding: 12px 12px;
+          background: #fff;
+        }
+
+        .kpiLabel {
+          color: var(--muted);
+          font-size: 12px;
+          font-weight: 600;
+          margin-bottom: 4px;
+        }
+
+        .kpiValue {
+          font-size: 18px;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+        }
+
+        .formGrid2 {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        .field {
+          display: grid;
+          gap: 6px;
+        }
+
+        .field label {
+          font-size: 12.5px;
+          color: var(--muted);
+          font-weight: 700;
+        }
+
+        .field input,
+        .field select {
+          height: 42px;
+          border-radius: 12px;
+          border: 1px solid var(--line);
+          padding: 0 12px;
+          font-size: 13.5px;
+          outline: none;
+          background: #fff;
+        }
+
+        .field input:focus,
+        .field select:focus {
+          border-color: rgba(37, 99, 235, 0.35);
+          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+        }
+
+        .hint {
+          font-size: 12.5px;
+          color: var(--muted);
+          line-height: 1.5;
+          margin-top: 8px;
+        }
+
+        .notice {
+          border-radius: 14px;
+          padding: 12px 14px;
+          border: 1px solid var(--line);
+          font-size: 13.5px;
+          font-weight: 650;
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+
+        .noticeOk {
+          background: rgba(34, 197, 94, 0.08);
+          border-color: rgba(34, 197, 94, 0.18);
+        }
+        .noticeErr {
+          background: rgba(239, 68, 68, 0.08);
+          border-color: rgba(239, 68, 68, 0.18);
+        }
+
+        .tableWrap {
+          overflow-x: auto;
+          border: 1px solid var(--line);
+          border-radius: 14px;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 860px; /* ✅ lebih lebar karena ada kolom bobot & peluang */
+          background: #fff;
+        }
+        thead th {
+          text-align: left;
+          font-size: 12px;
+          color: var(--muted);
+          padding: 12px;
+          border-bottom: 1px solid var(--line);
+          background: rgba(15, 23, 42, 0.02);
+          white-space: nowrap;
+        }
+        tbody td {
+          padding: 12px;
+          border-bottom: 1px solid var(--line);
+          font-size: 13.5px;
+          vertical-align: top;
+        }
+        tbody tr:hover td {
+          background: rgba(37, 99, 235, 0.035);
+        }
+
+        .pillGreen {
+          background: rgba(34, 197, 94, 0.1);
+          color: rgba(22, 163, 74, 1);
+          border-color: rgba(34, 197, 94, 0.18);
+        }
+        .pillRed {
+          background: rgba(239, 68, 68, 0.1);
+          color: rgba(220, 38, 38, 1);
+          border-color: rgba(239, 68, 68, 0.18);
+        }
+
+        .chanceBar {
+          width: 160px;
+          height: 10px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: rgba(15, 23, 42, 0.03);
+          overflow: hidden;
+        }
+        .chanceFill {
+          height: 100%;
+          background: rgba(37, 99, 235, 0.55);
+          width: 0%;
+        }
+
+        @media (max-width: 980px) {
+          .layout {
+            grid-template-columns: 1fr;
+          }
+          .sidebar {
+            position: relative;
+            top: 0;
+          }
+          .kpis {
+            grid-template-columns: 1fr;
+          }
+          .formGrid2 {
+            grid-template-columns: 1fr;
+          }
+          table {
+            min-width: 980px;
+          }
+        }
+      `}</style>
+
+      <div className="appShell">
+        <header className="appHeader">
+          <div className="headerInner">
+            <div className="brandRow">
+              <div className="logoWrap" aria-hidden="true">
+                <Image
+                  src={rainbowLogo}
+                  alt="SPP Rainbow"
+                  width={44}
+                  height={44}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  priority
                 />
               </div>
-              <div className="field">
-                <label>Nominal SPP</label>
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
-                />
+              <div className="brandText">
+                <b>SPP Rainbow</b>
+                <span>Super Admin Panel</span>
               </div>
-              <div className="field">
-                <label>Batas Lucky Spin (tanggal)</label>
-                <input
-                  type="number"
-                  value={deadline}
-                  onChange={(e) => setDeadline(Number(e.target.value))}
-                />
-              </div>
-              <button className="btn btnPrimary" onClick={setSpp}>
-                Simpan
+            </div>
+
+            <div className="headerRight">
+              {/* ✅ menu kanan atas sudah dihapus, tinggal Logout */}
+              <button className="dangerBtn" onClick={logout}>
+                Logout
               </button>
-              <div className="small">
-                Spin berlaku jika tanggal hari ini &lt; {deadline}.
-              </div>
             </div>
-          </section>
+          </div>
+        </header>
 
-          <section className="card">
-            <div className="sectionTitle">
-              <h2>Tambah Hadiah</h2>
-              <span className="badge">Lucky Spin</span>
+        <div className="layout">
+          <aside className="sidebar">
+            <div className="sidebarTop">
+              <h3>Navigation</h3>
+              <span className="pill">Admin</span>
             </div>
 
-            <div className="form">
-              <div className="field">
-                <label>Label hadiah</label>
-                <input
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="Diskon 10rb / Zonk"
-                />
-              </div>
-              <div className="field">
-                <label>Tipe</label>
-                <select
-                  value={type}
-                  onChange={(e) => setType(e.target.value as any)}
-                >
-                  <option value="FIXED">FIXED (rupiah)</option>
-                  <option value="PERCENT">PERCENT (%)</option>
-                  <option value="NONE">NONE (zonk)</option>
-                </select>
-              </div>
+            <div className="sideMenu">
+              {menu.map((m) => {
+                const active = m.key === activeSection;
+                return (
+                  <button
+                    key={m.key}
+                    className={`menuBtn ${active ? "menuBtnActive" : ""}`}
+                    onClick={() => go(m.key)}
+                    type="button"
+                  >
+                    <span>{m.label}</span>
+                    <span style={{ opacity: 0.5 }}>›</span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
 
-              <div className="grid2">
-                <div className="field">
-                  <label>Value</label>
-                  <input
-                    type="number"
-                    value={value}
-                    onChange={(e) => setValue(Number(e.target.value))}
-                  />
+          <main className="content">
+            {msg ? (
+              <div
+                className={`notice ${
+                  msg.type === "ok" ? "noticeOk" : "noticeErr"
+                }`}
+              >
+                <span style={{ fontSize: 16 }}>
+                  {msg.type === "ok" ? "✅" : "⚠️"}
+                </span>
+                <span>{msg.text}</span>
+              </div>
+            ) : null}
+
+            {activeSection === "dashboard" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h1>Dashboard Super Admin</h1>
+                    <p className="sub">
+                      Panel ringkas untuk mengelola SPP period aktif, Lucky
+                      Spin, dan akun siswa.
+                    </p>
+                  </div>
+                  <span className="pill">{periodLabel}</span>
                 </div>
-                <div className="field">
-                  <label>Kuota</label>
-                  <input
-                    type="number"
-                    value={quota}
-                    onChange={(e) => setQuota(Number(e.target.value))}
-                  />
+
+                <div className="divider" />
+
+                <div className="kpis">
+                  <div className="kpiBox">
+                    <div className="kpiLabel">Period</div>
+                    <div className="kpiValue">{periodLabel}</div>
+                  </div>
+                  <div className="kpiBox">
+                    <div className="kpiLabel">Total Hadiah</div>
+                    <div className="kpiValue">{totalHadiah}</div>
+                  </div>
+                  <div className="kpiBox">
+                    <div className="kpiLabel">Sisa Kuota</div>
+                    <div className="kpiValue">{totalSisa}</div>
+                  </div>
                 </div>
-              </div>
 
-              <button className="btn btnPrimary" onClick={addPrize}>
-                Tambah
-              </button>
-              <div className="small">
-                Setelah tambah, hadiah otomatis muncul di list bawah.
-              </div>
-            </div>
-          </section>
+                <p className="hint" style={{ marginTop: 10 }}>
+                  Peluang hadiah ditentukan oleh <b>Bobot (weight)</b>. Semakin
+                  besar bobot, semakin sering hadiah itu keluar (selama{" "}
+                  <b>sisa kuota &gt; 0</b>).
+                </p>
+              </section>
+            ) : null}
+
+            {activeSection === "setSpp" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>Set SPP Period Aktif</h2>
+                    <p className="sub">
+                      Tentukan period, nominal SPP, dan batas Lucky Spin.
+                    </p>
+                  </div>
+                  <span className="pill">Wajib</span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>Period (YYYY-MM)</label>
+                    <input
+                      value={period}
+                      onChange={(e) => setPeriod(e.target.value)}
+                      placeholder="2025-12"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Nominal SPP</label>
+                    <input
+                      type="number"
+                      value={amount}
+                      onChange={(e) => setAmount(Number(e.target.value))}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Batas Lucky Spin (tanggal)</label>
+                    <input
+                      type="number"
+                      value={deadline}
+                      onChange={(e) => setDeadline(Number(e.target.value))}
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="primaryBtn"
+                      onClick={setSpp}
+                      type="button"
+                    >
+                      Simpan Pengaturan
+                    </button>
+                  </div>
+                </div>
+
+                <p className="hint">
+                  Spin berlaku jika tanggal hari ini &lt; <b>{deadline}</b>.
+                </p>
+              </section>
+            ) : null}
+
+            {activeSection === "addPrize" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>Tambah Hadiah</h2>
+                    <p className="sub">
+                      Tambahkan hadiah untuk Lucky Spin sesuai period aktif.
+                    </p>
+                  </div>
+                  <span className="pill">Lucky Spin</span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>Period</label>
+                    <input
+                      value={period}
+                      onChange={(e) => setPeriod(e.target.value)}
+                      placeholder="2025-12"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Label hadiah</label>
+                    <input
+                      value={label}
+                      onChange={(e) => setLabel(e.target.value)}
+                      placeholder="Diskon 10rb / Zonk"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Tipe</label>
+                    <select
+                      value={type}
+                      onChange={(e) => setType(e.target.value as any)}
+                    >
+                      <option value="FIXED">FIXED (rupiah)</option>
+                      <option value="PERCENT">PERCENT (%)</option>
+                      <option value="NONE">NONE (zonk)</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Value</label>
+                    <input
+                      type="number"
+                      value={value}
+                      onChange={(e) => setValue(Number(e.target.value))}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Kuota</label>
+                    <input
+                      type="number"
+                      value={quota}
+                      onChange={(e) => setQuota(Number(e.target.value))}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Bobot peluang (weight)</label>
+                    <input
+                      type="number"
+                      value={weight}
+                      onChange={(e) => setWeight(Number(e.target.value))}
+                      placeholder="misal 90 (sering), 10 (jarang)"
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="primaryBtn"
+                      onClick={addPrize}
+                      type="button"
+                    >
+                      Tambah Hadiah
+                    </button>
+                  </div>
+                </div>
+
+                <p className="hint">
+                  Contoh: hadiah 5rb weight <b>90</b> dan hadiah 10rb weight{" "}
+                  <b>10</b> → peluang kira-kira 90% vs 10% (selama sisa kuota
+                  masih ada).
+                </p>
+              </section>
+            ) : null}
+
+            {activeSection === "listPrize" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>List Hadiah</h2>
+                    <p className="sub">
+                      Daftar hadiah periode <b>{periodLabel}</b> beserta bobot &
+                      peluang keluar.
+                    </p>
+                  </div>
+                  <span className="pill">
+                    {loadingList ? "Memuat..." : `${totalHadiah} item`}
+                  </span>
+                </div>
+
+                <div className="divider" />
+
+                {totalHadiah === 0 ? (
+                  <p className="hint">
+                    Belum ada hadiah untuk periode ini. Tambahkan minimal 5
+                    hadiah (termasuk zonk).
+                  </p>
+                ) : (
+                  <>
+                    <p className="hint" style={{ marginTop: 0 }}>
+                      Peluang dihitung dari hadiah yang <b>aktif</b>,{" "}
+                      <b>sisa &gt; 0</b>, dan <b>weight &gt; 0</b>. Rumus:
+                      peluang = weight / totalWeight × 100.
+                    </p>
+
+                    <div className="tableWrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Label</th>
+                            <th>Tipe</th>
+                            <th>Nilai</th>
+                            <th>Kuota</th>
+                            <th>Terpakai</th>
+                            <th>Sisa</th>
+                            <th>Bobot</th>
+                            <th>Peluang</th>
+                            <th>Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {prizes.map((p) => {
+                            const sisa = Math.max(
+                              0,
+                              Number(p.quota) - Number(p.used)
+                            );
+                            const w = Number(p.weight ?? 1);
+                            const chance = Number(chanceMap[p.id] || 0);
+
+                            return (
+                              <tr key={p.id}>
+                                <td>
+                                  <b>{p.label}</b>
+                                </td>
+                                <td>
+                                  <span
+                                    className="pill"
+                                    style={{ fontWeight: 800 }}
+                                  >
+                                    {p.type}
+                                  </span>
+                                </td>
+                                <td>{formatHadiah(p)}</td>
+                                <td>{p.quota}</td>
+                                <td>{p.used}</td>
+                                <td>
+                                  <span
+                                    className={`pill ${
+                                      sisa > 0 ? "pillGreen" : "pillRed"
+                                    }`}
+                                  >
+                                    {sisa}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span
+                                    className="pill"
+                                    style={{ fontWeight: 800 }}
+                                  >
+                                    {Number.isFinite(w) ? w : 1}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div style={{ display: "grid", gap: 6 }}>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        gap: 10,
+                                        alignItems: "center",
+                                      }}
+                                    >
+                                      <div className="chanceBar">
+                                        <div
+                                          className="chanceFill"
+                                          style={{
+                                            width: `${Math.max(
+                                              0,
+                                              Math.min(100, chance)
+                                            ).toFixed(2)}%`,
+                                          }}
+                                        />
+                                      </div>
+                                      <b style={{ minWidth: 72 }}>
+                                        {chance.toFixed(2)}%
+                                      </b>
+                                    </div>
+                                    <span
+                                      style={{
+                                        fontSize: 12,
+                                        color: "var(--muted)",
+                                      }}
+                                    >
+                                      {p.active && sisa > 0 && (w ?? 1) > 0
+                                        ? "Eligible"
+                                        : "Tidak ikut undian"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td>
+                                  <button
+                                    className="dangerBtn"
+                                    onClick={() => deletePrize(p.id)}
+                                    type="button"
+                                    style={{ height: 36, padding: "0 10px" }}
+                                  >
+                                    Hapus
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </section>
+            ) : null}
+
+            {activeSection === "addStudent" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>Tambah Siswa + Buat Akun</h2>
+                    <p className="sub">
+                      Username siswa otomatis (0001, 0002, 0003, dst).
+                    </p>
+                  </div>
+                  <span className="pill">Siswa</span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>NIS / Username (otomatis)</label>
+                    <input value={nis} readOnly />
+                  </div>
+
+                  <div className="field">
+                    <label>Nama</label>
+                    <input
+                      value={nama}
+                      onChange={(e) => setNama(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Kelas</label>
+                    <input
+                      value={kelas}
+                      onChange={(e) => setKelas(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Password awal</label>
+                    <input
+                      value={pass}
+                      onChange={(e) => setPass(e.target.value)}
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="primaryBtn"
+                      onClick={addStudent}
+                      type="button"
+                    >
+                      Buat Akun Siswa
+                    </button>
+                  </div>
+                </div>
+
+                <div className="divider" style={{ marginTop: 16 }} />
+
+                <div className="titleRow" style={{ marginBottom: 10 }}>
+                  <div>
+                    <h2>List Siswa Terbaru</h2>
+                    <p className="sub">
+                      Setelah tambah, siswa akan muncul di sini dan bisa login
+                      pakai username (NIS) + password.
+                    </p>
+                  </div>
+
+                  <button
+                    className="primaryBtn"
+                    type="button"
+                    onClick={loadStudents}
+                  >
+                    {loadingStudents ? "Memuat..." : "Refresh"}
+                  </button>
+                </div>
+
+                {students.length === 0 ? (
+                  <p className="hint">Belum ada data siswa. Klik Refresh.</p>
+                ) : (
+                  <div className="tableWrap">
+                    <table style={{ minWidth: 720 }}>
+                      <thead>
+                        <tr>
+                          <th>NIS</th>
+                          <th>Nama</th>
+                          <th>Kelas</th>
+                          <th>Username</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {students.slice(0, 20).map((s, idx) => (
+                          <tr key={(s.id || s.nis) + "-" + idx}>
+                            <td>
+                              <b>{s.nis}</b>
+                            </td>
+                            <td>{s.nama}</td>
+                            <td>
+                              <span
+                                className="pill"
+                                style={{ fontWeight: 800 }}
+                              >
+                                {s.kelas}
+                              </span>
+                            </td>
+                            <td>{s.username || s.nis}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {activeSection === "listStudent" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>List Siswa</h2>
+                    <p className="sub">
+                      Pencarian berdasarkan NIS / Nama / Kelas.
+                    </p>
+                  </div>
+                  <span className="pill">
+                    {loadingStudents ? "Memuat..." : `${students.length} siswa`}
+                  </span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>Cari</label>
+                    <input
+                      value={studentQ}
+                      onChange={(e) => setStudentQ(e.target.value)}
+                      placeholder="contoh: 0001 / Budi / X-A"
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="primaryBtn"
+                      onClick={loadStudents}
+                      type="button"
+                    >
+                      Tampilkan
+                    </button>
+                  </div>
+                </div>
+
+                {students.length === 0 ? (
+                  <p className="hint">
+                    Belum ada data siswa atau hasil pencarian kosong. Klik{" "}
+                    <b>Tampilkan</b>.
+                  </p>
+                ) : (
+                  <div className="tableWrap">
+                    <table style={{ minWidth: 820 }}>
+                      <thead>
+                        <tr>
+                          <th>NIS</th>
+                          <th>Nama</th>
+                          <th>Kelas</th>
+                          <th>Username</th>
+                          <th>ID</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {students.map((s, idx) => (
+                          <tr key={(s.id || s.nis) + "-" + idx}>
+                            <td>
+                              <b>{s.nis}</b>
+                            </td>
+                            <td>{s.nama}</td>
+                            <td>
+                              <span
+                                className="pill"
+                                style={{ fontWeight: 800 }}
+                              >
+                                {s.kelas}
+                              </span>
+                            </td>
+                            <td>{s.username || s.nis}</td>
+                            <td
+                              style={{ color: "var(--muted)", fontSize: 12.5 }}
+                            >
+                              {s.id || "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : null}
+          </main>
         </div>
-
-        <div style={{ height: 14 }} />
-
-        <section className="card">
-          <div className="sectionTitle">
-            <h2>List Hadiah ({periodLabel})</h2>
-            <span className="badge">
-              {loadingList ? "Memuat..." : `${totalHadiah} item`}
-            </span>
-          </div>
-
-          {totalHadiah === 0 ? (
-            <div className="small">
-              Belum ada hadiah untuk periode ini. Tambahkan minimal 5 hadiah
-              (termasuk zonk).
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Label</th>
-                    <th>Tipe</th>
-                    <th>Nilai</th>
-                    <th>Kuota</th>
-                    <th>Terpakai</th>
-                    <th>Sisa</th>
-                    <th>Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prizes.map((p) => {
-                    const sisa = Math.max(0, Number(p.quota) - Number(p.used));
-                    return (
-                      <tr key={p.id}>
-                        <td>
-                          <b>{p.label}</b>
-                        </td>
-                        <td>
-                          <span className="pill">{p.type}</span>
-                        </td>
-                        <td>{formatHadiah(p)}</td>
-                        <td>{p.quota}</td>
-                        <td>{p.used}</td>
-                        <td>
-                          <span
-                            className={`pill ${
-                              sisa > 0 ? "pillGreen" : "pillRed"
-                            }`}
-                          >
-                            {sisa}
-                          </span>
-                        </td>
-                        <td>
-                          <button
-                            className="btn btnDanger btnSm"
-                            onClick={() => deletePrize(p.id)}
-                          >
-                            Hapus
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="small" style={{ marginTop: 10 }}>
-            Catatan: kalau hadiah sudah terpakai (used &gt; 0), menghapus masih
-            boleh, tapi efeknya hadiah itu tidak akan keluar lagi.
-          </div>
-        </section>
-
-        <div style={{ height: 14 }} />
-
-        <section className="card">
-          <div className="sectionTitle">
-            <h2>Tambah Siswa + Buat Akun</h2>
-            <span className="badge">Username = NIS</span>
-          </div>
-
-          <div className="grid2">
-            <div className="form">
-              <div className="field">
-                <label>NIS</label>
-                <input value={nis} onChange={(e) => setNis(e.target.value)} />
-              </div>
-              <div className="field">
-                <label>Nama</label>
-                <input value={nama} onChange={(e) => setNama(e.target.value)} />
-              </div>
-              <div className="field">
-                <label>Kelas</label>
-                <input
-                  value={kelas}
-                  onChange={(e) => setKelas(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="form">
-              <div className="field">
-                <label>Password awal</label>
-                <input value={pass} onChange={(e) => setPass(e.target.value)} />
-              </div>
-              <button className="btn btnPrimary" onClick={addStudent}>
-                Buat Akun Siswa
-              </button>
-              <div className="small">
-                Siswa login di /login menggunakan NIS dan password ini.
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <div style={{ height: 18 }} />
-        <div className="small">© {new Date().getFullYear()} SPP Rainbow</div>
       </div>
     </>
   );

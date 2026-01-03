@@ -13,17 +13,18 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const period = searchParams.get("period");
-  if (!period)
-    return NextResponse.json({ error: "period wajib" }, { status: 400 });
+  const period = String(searchParams.get("period") || "").trim();
+  if (!period) return NextResponse.json({ prizes: [] });
 
   const { data, error } = await supabaseAdmin
     .from("spin_prizes")
-    .select("id,label,type,value,quota,used,active,created_at")
+    // ✅ PENTING: pastikan weight ikut keambil
+    .select("id,label,type,value,quota,used,active,weight,created_at")
     .eq("period", period)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: true });
 
   if (error)
     return NextResponse.json({ error: error.message }, { status: 400 });
+
   return NextResponse.json({ ok: true, prizes: data || [] });
 }
