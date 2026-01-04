@@ -419,7 +419,7 @@ export default function LoginPage() {
               <br />
             </h2>
 
-            <p className="heroSub">Login Menggunakan NIS Untuk Siswa</p>
+            <p className="heroSub">Login Menggunakan NIS</p>
 
             <div className="heroCards">
               <div className="infoCard">
@@ -462,7 +462,7 @@ export default function LoginPage() {
           <section className="panel">
             <div className="panelHead">
               <div className="panelTitle">
-                <b>Login Sesuai Dengan NIS Siswa</b>
+                <b>Login Sesuai Dengan NIS</b>
               </div>
               <span
                 style={{

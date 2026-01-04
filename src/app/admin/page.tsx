@@ -28,6 +28,30 @@ type Student = {
   is_active?: boolean;
 };
 
+type PaymentRow = {
+  id: string;
+  period: string; // YYYY-MM
+  amount: number; // nominal yang dibayar
+  status: "PAID" | "UNPAID" | "PENDING" | string;
+  paid_at?: string | null; // ISO date
+  method?: string | null;
+  ref?: string | null;
+};
+
+type StudentPaymentDetail = {
+  current?: {
+    period?: string;
+    status?: string;
+    base_amount?: number;
+    discount_amount?: number;
+    final_amount?: number;
+    paid_at?: string | null;
+    method?: string | null;
+    ref?: string | null;
+  } | null;
+  history?: PaymentRow[];
+};
+
 function formatPeriode(yyyyMM?: string) {
   if (!yyyyMM) return "-";
   const [yStr, mStr] = yyyyMM.split("-");
@@ -166,6 +190,14 @@ export default function AdminPage() {
 
   const periodLabel = useMemo(() => formatPeriode(period), [period]);
 
+  // ✅ DETAIL pembayaran siswa (modal)
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [studentPayDetail, setStudentPayDetail] =
+    useState<StudentPaymentDetail | null>(null);
+  const [detailErr, setDetailErr] = useState<string | null>(null);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -279,6 +311,67 @@ export default function AdminPage() {
     await loadStudents(); // ✅ refresh biar langsung muncul & nis naik
   }
 
+  // ✅ klik siswa -> buka modal & load pembayaran
+  async function openStudentPayments(s: Student) {
+    setSelectedStudent(s);
+    setDetailOpen(true);
+    setDetailErr(null);
+    setStudentPayDetail(null);
+    setDetailLoading(true);
+
+    try {
+      // Endpoint yang disarankan:
+      // GET /api/admin/students/payments?nis=0001
+      // atau bisa pakai ?student_id=xxx (kalau kamu punya id)
+      const qs = new URLSearchParams();
+      if (s.id) qs.set("student_id", s.id);
+      qs.set("nis", s.nis);
+
+      const res = await fetch(`/api/admin/students/payments?${qs.toString()}`);
+      const d = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setDetailErr(d?.error || "Gagal ambil detail pembayaran siswa");
+        setDetailLoading(false);
+        return;
+      }
+
+      const detail: StudentPaymentDetail = {
+        current: d?.current ?? null,
+        history: Array.isArray(d?.history)
+          ? d.history
+          : Array.isArray(d?.payments)
+          ? d.payments
+          : [],
+      };
+
+      // Kalau history campur, tampilkan yang PAID dulu & urut terbaru
+      if (Array.isArray(detail.history)) {
+        const rows = [...detail.history];
+        rows.sort((a, b) => {
+          const ta = a.paid_at ? new Date(a.paid_at).getTime() : 0;
+          const tb = b.paid_at ? new Date(b.paid_at).getTime() : 0;
+          return tb - ta;
+        });
+        detail.history = rows;
+      }
+
+      setStudentPayDetail(detail);
+      setDetailLoading(false);
+    } catch (e: any) {
+      setDetailErr(e?.message || "Terjadi kesalahan");
+      setDetailLoading(false);
+    }
+  }
+
+  function closeDetail() {
+    setDetailOpen(false);
+    setSelectedStudent(null);
+    setStudentPayDetail(null);
+    setDetailErr(null);
+    setDetailLoading(false);
+  }
+
   // reload list hadiah saat period berubah
   useEffect(() => {
     loadPrizes();
@@ -327,6 +420,16 @@ export default function AdminPage() {
 
   // ✅ mencegah mismatch: render hanya setelah mounted
   if (!mounted) return null;
+
+  const currentStatus = String(
+    studentPayDetail?.current?.status || ""
+  ).toUpperCase();
+  const currentPeriod = String(
+    studentPayDetail?.current?.period || period || ""
+  );
+  const currentBase = Number(studentPayDetail?.current?.base_amount ?? NaN);
+  const currentDisc = Number(studentPayDetail?.current?.discount_amount ?? NaN);
+  const currentFinal = Number(studentPayDetail?.current?.final_amount ?? NaN);
 
   return (
     <>
@@ -732,6 +835,86 @@ export default function AdminPage() {
           width: 0%;
         }
 
+        /* ✅ Row clickable */
+        .rowClickable {
+          cursor: pointer;
+        }
+
+        /* ✅ Modal */
+        .modalOverlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.45);
+          backdrop-filter: blur(6px);
+          z-index: 80;
+          display: grid;
+          place-items: center;
+          padding: 18px;
+        }
+        .modalCard {
+          width: min(980px, 100%);
+          background: var(--card);
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+          overflow: hidden;
+        }
+        .modalHead {
+          padding: 16px 16px;
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          border-bottom: 1px solid var(--line);
+          background: rgba(15, 23, 42, 0.015);
+        }
+        .modalHead h3 {
+          margin: 0;
+          font-size: 16px;
+          letter-spacing: -0.02em;
+        }
+        .modalHead p {
+          margin: 6px 0 0;
+          color: var(--muted);
+          font-size: 13px;
+          line-height: 1.45;
+        }
+        .modalBody {
+          padding: 16px;
+          display: grid;
+          gap: 14px;
+        }
+        .modalGrid {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 12px;
+        }
+        .miniBox {
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          padding: 12px;
+          background: #fff;
+        }
+        .miniLabel {
+          font-size: 12px;
+          color: var(--muted);
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+        .miniValue {
+          font-size: 16px;
+          font-weight: 900;
+          letter-spacing: -0.02em;
+        }
+        .modalFoot {
+          padding: 14px 16px;
+          border-top: 1px solid var(--line);
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          background: rgba(15, 23, 42, 0.015);
+        }
+
         @media (max-width: 980px) {
           .layout {
             grid-template-columns: 1fr;
@@ -748,6 +931,9 @@ export default function AdminPage() {
           }
           table {
             min-width: 980px;
+          }
+          .modalGrid {
+            grid-template-columns: 1fr;
           }
         }
       `}</style>
@@ -767,13 +953,12 @@ export default function AdminPage() {
                 />
               </div>
               <div className="brandText">
-                <b>SPP Rainbow</b>
+                <b>SPP SHINING SUN</b>
                 <span>Super Admin Panel</span>
               </div>
             </div>
 
             <div className="headerRight">
-              {/* ✅ menu kanan atas sudah dihapus, tinggal Logout */}
               <button className="dangerBtn" onClick={logout}>
                 Logout
               </button>
@@ -1272,7 +1457,8 @@ export default function AdminPage() {
                   <div>
                     <h2>List Siswa</h2>
                     <p className="sub">
-                      Pencarian berdasarkan NIS / Nama / Kelas.
+                      Klik salah satu siswa untuk melihat <b>status bayar</b>{" "}
+                      dan <b>riwayat pembayaran</b>.
                     </p>
                   </div>
                   <span className="pill">
@@ -1321,7 +1507,12 @@ export default function AdminPage() {
                       </thead>
                       <tbody>
                         {students.map((s, idx) => (
-                          <tr key={(s.id || s.nis) + "-" + idx}>
+                          <tr
+                            key={(s.id || s.nis) + "-" + idx}
+                            className="rowClickable"
+                            onClick={() => openStudentPayments(s)}
+                            title="Klik untuk lihat status bayar & riwayat"
+                          >
                             <td>
                               <b>{s.nis}</b>
                             </td>
@@ -1351,6 +1542,228 @@ export default function AdminPage() {
           </main>
         </div>
       </div>
+
+      {/* ✅ MODAL DETAIL PEMBAYARAN SISWA */}
+      {detailOpen ? (
+        <div
+          className="modalOverlay"
+          onMouseDown={(e) => {
+            // klik backdrop = close
+            if (e.target === e.currentTarget) closeDetail();
+          }}
+        >
+          <div className="modalCard">
+            <div className="modalHead">
+              <div>
+                <h3>Detail Pembayaran Siswa</h3>
+                <p>
+                  <b>{selectedStudent?.nama}</b> • NIS{" "}
+                  <b>{selectedStudent?.nis}</b> • Kelas{" "}
+                  <b>{selectedStudent?.kelas}</b>
+                </p>
+              </div>
+              <button className="dangerBtn" onClick={closeDetail} type="button">
+                Tutup
+              </button>
+            </div>
+
+            <div className="modalBody">
+              {detailLoading ? (
+                <div className="hint">Memuat detail pembayaran…</div>
+              ) : detailErr ? (
+                <div className="notice noticeErr">
+                  <span style={{ fontSize: 16 }}>⚠️</span>
+                  <span>{detailErr}</span>
+                </div>
+              ) : !studentPayDetail ? (
+                <div className="hint">
+                  Belum ada data detail. Pastikan endpoint{" "}
+                  <b>/api/admin/students/payments</b> tersedia.
+                </div>
+              ) : (
+                <>
+                  {/* STATUS PERIODE AKTIF */}
+                  <div
+                    className="card"
+                    style={{ boxShadow: "none", padding: 14 }}
+                  >
+                    <div className="titleRow" style={{ marginBottom: 6 }}>
+                      <div>
+                        <h2 style={{ fontSize: 16, margin: 0 }}>
+                          Status Periode Aktif
+                        </h2>
+                        <p className="sub" style={{ marginTop: 6 }}>
+                          Periode: <b>{formatPeriode(currentPeriod)}</b>
+                        </p>
+                      </div>
+                      <span
+                        className={`pill ${
+                          currentStatus === "PAID"
+                            ? "pillGreen"
+                            : currentStatus === "PENDING"
+                            ? ""
+                            : "pillRed"
+                        }`}
+                        style={{ fontWeight: 900 }}
+                      >
+                        {currentStatus || "UNKNOWN"}
+                      </span>
+                    </div>
+
+                    <div className="modalGrid">
+                      <div className="miniBox">
+                        <div className="miniLabel">SPP</div>
+                        <div className="miniValue">
+                          {Number.isFinite(currentBase)
+                            ? `Rp ${currentBase.toLocaleString("id-ID")}`
+                            : "-"}
+                        </div>
+                      </div>
+                      <div className="miniBox">
+                        <div className="miniLabel">Diskon</div>
+                        <div className="miniValue">
+                          {Number.isFinite(currentDisc)
+                            ? `Rp ${currentDisc.toLocaleString("id-ID")}`
+                            : "-"}
+                        </div>
+                      </div>
+                      <div className="miniBox">
+                        <div className="miniLabel">Total Bayar</div>
+                        <div className="miniValue">
+                          {Number.isFinite(currentFinal)
+                            ? `Rp ${currentFinal.toLocaleString("id-ID")}`
+                            : "-"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="divider" style={{ margin: "12px 0" }} />
+
+                    <div className="hint" style={{ marginTop: 0 }}>
+                      Tanggal bayar:{" "}
+                      <b>
+                        {studentPayDetail.current?.paid_at
+                          ? new Date(
+                              studentPayDetail.current.paid_at
+                            ).toLocaleString("id-ID")
+                          : "-"}
+                      </b>{" "}
+                      • Metode: <b>{studentPayDetail.current?.method || "-"}</b>{" "}
+                      • Ref:{" "}
+                      <b
+                        style={{
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                        }}
+                      >
+                        {studentPayDetail.current?.ref || "-"}
+                      </b>
+                    </div>
+                  </div>
+
+                  {/* RIWAYAT */}
+                  <div
+                    className="card"
+                    style={{ boxShadow: "none", padding: 14 }}
+                  >
+                    <div className="titleRow" style={{ marginBottom: 6 }}>
+                      <div>
+                        <h2 style={{ fontSize: 16, margin: 0 }}>
+                          Riwayat Pembayaran
+                        </h2>
+                        <p className="sub" style={{ marginTop: 6 }}>
+                          Menampilkan semua transaksi pembayaran (urut terbaru).
+                        </p>
+                      </div>
+                      <span className="pill">
+                        {(studentPayDetail.history || []).length} item
+                      </span>
+                    </div>
+
+                    {(studentPayDetail.history || []).length === 0 ? (
+                      <div className="hint">
+                        Belum ada riwayat pembayaran untuk siswa ini.
+                      </div>
+                    ) : (
+                      <div className="tableWrap">
+                        <table style={{ minWidth: 820 }}>
+                          <thead>
+                            <tr>
+                              <th>Periode</th>
+                              <th>Nominal</th>
+                              <th>Status</th>
+                              <th>Tanggal Bayar</th>
+                              <th>Metode</th>
+                              <th>Ref</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(studentPayDetail.history || []).map((r) => {
+                              const st = String(r.status || "").toUpperCase();
+                              const isPaid = st === "PAID";
+                              return (
+                                <tr key={r.id}>
+                                  <td>
+                                    <b>{formatPeriode(r.period)}</b>
+                                  </td>
+                                  <td>
+                                    Rp{" "}
+                                    {Number(r.amount || 0).toLocaleString(
+                                      "id-ID"
+                                    )}
+                                  </td>
+                                  <td>
+                                    <span
+                                      className={`pill ${
+                                        isPaid ? "pillGreen" : "pillRed"
+                                      }`}
+                                      style={{ fontWeight: 900 }}
+                                    >
+                                      {st || "-"}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {r.paid_at
+                                      ? new Date(r.paid_at).toLocaleString(
+                                          "id-ID"
+                                        )
+                                      : "-"}
+                                  </td>
+                                  <td>{r.method || "-"}</td>
+                                  <td
+                                    style={{
+                                      fontFamily:
+                                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                                      fontSize: 12.5,
+                                      color: "var(--muted)",
+                                    }}
+                                  >
+                                    {r.ref || "-"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="modalFoot">
+              <button
+                className="primaryBtn"
+                onClick={closeDetail}
+                type="button"
+              >
+                Selesai
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
