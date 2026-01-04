@@ -170,6 +170,7 @@ export default function AdminPage() {
   // list hadiah
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [clearingPrizes, setClearingPrizes] = useState(false);
 
   // tambah siswa
   const [nis, setNis] = useState("0001"); // ✅ default 0001
@@ -181,6 +182,9 @@ export default function AdminPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [studentQ, setStudentQ] = useState("");
+  const [deletingStudentId, setDeletingStudentId] = useState<string | null>(
+    null
+  );
 
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(
     null
@@ -276,6 +280,33 @@ export default function AdminPage() {
     await loadPrizes();
   }
 
+  // ✅ HAPUS SEMUA HADIAH PERIODE
+  async function clearPrizes() {
+    const ok = confirm(
+      `Yakin hapus SEMUA hadiah untuk periode ${formatPeriode(period)}?`
+    );
+    if (!ok) return;
+
+    setMsg(null);
+    setClearingPrizes(true);
+    const res = await fetch(
+      `/api/admin/spin-prizes/clear?period=${encodeURIComponent(period)}`,
+      { method: "DELETE" }
+    );
+    const d = await res.json().catch(() => ({}));
+    setClearingPrizes(false);
+
+    if (!res.ok) {
+      return setMsg({
+        type: "err",
+        text: d?.error || "Gagal hapus semua hadiah",
+      });
+    }
+
+    setMsg({ type: "ok", text: "Semua hadiah periode ini berhasil dihapus" });
+    await loadPrizes();
+  }
+
   async function loadStudents() {
     setLoadingStudents(true);
     const res = await fetch(
@@ -311,6 +342,41 @@ export default function AdminPage() {
     await loadStudents(); // ✅ refresh biar langsung muncul & nis naik
   }
 
+  // ✅ HAPUS SISWA (baris tabel / modal)
+  async function deleteStudent(s: Student) {
+    const ok = confirm(
+      `Yakin hapus siswa ini?\n\n${s.nama} • NIS ${s.nis}\n\nCatatan: akun siswa + data siswa akan dihapus.`
+    );
+    if (!ok) return;
+
+    setMsg(null);
+    setDeletingStudentId(String(s.id || s.nis));
+
+    const qs = new URLSearchParams();
+    if (s.id) qs.set("student_id", s.id);
+    qs.set("nis", s.nis);
+
+    const res = await fetch(`/api/admin/students/delete?${qs.toString()}`, {
+      method: "DELETE",
+    });
+    const d = await res.json().catch(() => ({}));
+
+    setDeletingStudentId(null);
+
+    if (!res.ok) {
+      return setMsg({ type: "err", text: d?.error || "Gagal hapus siswa" });
+    }
+
+    setMsg({ type: "ok", text: "Siswa berhasil dihapus" });
+
+    // kalau modal sedang terbuka untuk siswa yang sama, tutup biar aman
+    if (selectedStudent?.nis === s.nis) {
+      closeDetail();
+    }
+
+    await loadStudents();
+  }
+
   // ✅ klik siswa -> buka modal & load pembayaran
   async function openStudentPayments(s: Student) {
     setSelectedStudent(s);
@@ -320,9 +386,6 @@ export default function AdminPage() {
     setDetailLoading(true);
 
     try {
-      // Endpoint yang disarankan:
-      // GET /api/admin/students/payments?nis=0001
-      // atau bisa pakai ?student_id=xxx (kalau kamu punya id)
       const qs = new URLSearchParams();
       if (s.id) qs.set("student_id", s.id);
       qs.set("nis", s.nis);
@@ -345,7 +408,6 @@ export default function AdminPage() {
           : [],
       };
 
-      // Kalau history campur, tampilkan yang PAID dulu & urut terbaru
       if (Array.isArray(detail.history)) {
         const rows = [...detail.history];
         rows.sort((a, b) => {
@@ -1204,9 +1266,23 @@ export default function AdminPage() {
                       peluang keluar.
                     </p>
                   </div>
-                  <span className="pill">
-                    {loadingList ? "Memuat..." : `${totalHadiah} item`}
-                  </span>
+
+                  <div
+                    style={{ display: "flex", gap: 10, alignItems: "center" }}
+                  >
+                    <span className="pill">
+                      {loadingList ? "Memuat..." : `${totalHadiah} item`}
+                    </span>
+                    <button
+                      className="dangerBtn"
+                      onClick={clearPrizes}
+                      type="button"
+                      disabled={clearingPrizes || totalHadiah === 0}
+                      title="Hapus semua hadiah untuk periode ini"
+                    >
+                      {clearingPrizes ? "Menghapus..." : "Hapus Semua Hadiah"}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="divider" />
@@ -1417,13 +1493,14 @@ export default function AdminPage() {
                   <p className="hint">Belum ada data siswa. Klik Refresh.</p>
                 ) : (
                   <div className="tableWrap">
-                    <table style={{ minWidth: 720 }}>
+                    <table style={{ minWidth: 820 }}>
                       <thead>
                         <tr>
                           <th>NIS</th>
                           <th>Nama</th>
                           <th>Kelas</th>
                           <th>Username</th>
+                          <th>Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1442,6 +1519,21 @@ export default function AdminPage() {
                               </span>
                             </td>
                             <td>{s.username || s.nis}</td>
+                            <td>
+                              <button
+                                className="dangerBtn"
+                                type="button"
+                                style={{ height: 34, padding: "0 10px" }}
+                                disabled={
+                                  deletingStudentId === String(s.id || s.nis)
+                                }
+                                onClick={() => deleteStudent(s)}
+                              >
+                                {deletingStudentId === String(s.id || s.nis)
+                                  ? "..."
+                                  : "Hapus"}
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1495,7 +1587,7 @@ export default function AdminPage() {
                   </p>
                 ) : (
                   <div className="tableWrap">
-                    <table style={{ minWidth: 820 }}>
+                    <table style={{ minWidth: 980 }}>
                       <thead>
                         <tr>
                           <th>NIS</th>
@@ -1503,6 +1595,7 @@ export default function AdminPage() {
                           <th>Kelas</th>
                           <th>Username</th>
                           <th>ID</th>
+                          <th>Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1531,6 +1624,24 @@ export default function AdminPage() {
                             >
                               {s.id || "-"}
                             </td>
+                            <td>
+                              <button
+                                className="dangerBtn"
+                                type="button"
+                                style={{ height: 34, padding: "0 10px" }}
+                                disabled={
+                                  deletingStudentId === String(s.id || s.nis)
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation(); // ✅ biar gak kebuka modal
+                                  deleteStudent(s);
+                                }}
+                              >
+                                {deletingStudentId === String(s.id || s.nis)
+                                  ? "..."
+                                  : "Hapus"}
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1548,7 +1659,6 @@ export default function AdminPage() {
         <div
           className="modalOverlay"
           onMouseDown={(e) => {
-            // klik backdrop = close
             if (e.target === e.currentTarget) closeDetail();
           }}
         >
@@ -1760,6 +1870,24 @@ export default function AdminPage() {
               >
                 Selesai
               </button>
+
+              {/* ✅ tombol hapus siswa dari modal */}
+              {selectedStudent ? (
+                <button
+                  className="dangerBtn"
+                  onClick={() => deleteStudent(selectedStudent)}
+                  type="button"
+                  disabled={
+                    deletingStudentId ===
+                    String(selectedStudent.id || selectedStudent.nis)
+                  }
+                >
+                  {deletingStudentId ===
+                  String(selectedStudent.id || selectedStudent.nis)
+                    ? "Menghapus..."
+                    : "Hapus Siswa"}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>

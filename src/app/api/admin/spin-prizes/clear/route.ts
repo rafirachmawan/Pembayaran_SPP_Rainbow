@@ -8,12 +8,13 @@ function isMissingTableError(msg?: string) {
   return (
     m.includes("could not find the table") ||
     m.includes("schema cache") ||
-    m.includes("relation") // kadang muncul "relation ... does not exist"
+    m.includes("relation")
   );
 }
 
-async function tryDeletePrizeRelations(prizeId: string) {
-  // ✅ daftar kandidat tabel relasi hasil spin (kalau salah satu ada, akan kehapus)
+async function tryDeletePrizeRelationsBulk(prizeIds: string[]) {
+  if (!prizeIds.length) return { table: null, error: null };
+
   const candidates = [
     "spin_results",
     "spin_logs",
@@ -29,12 +30,9 @@ async function tryDeletePrizeRelations(prizeId: string) {
     const { error } = await supabaseAdmin
       .from(table)
       .delete()
-      .eq("prize_id", prizeId);
+      .in("prize_id", prizeIds);
 
-    // kalau tabelnya tidak ada -> skip
     if (error && isMissingTableError(error.message)) continue;
-
-    // kalau error lain (misal RLS/permission) -> stop biar ketahuan
     if (error) return { table, error };
   }
 
@@ -52,11 +50,23 @@ export async function DELETE(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) return NextResponse.json({ error: "id wajib" }, { status: 400 });
+  const period = searchParams.get("period");
+  if (!period)
+    return NextResponse.json({ error: "period wajib" }, { status: 400 });
 
-  // ✅ coba hapus relasi dulu (kalau tabelnya ada)
-  const rel = await tryDeletePrizeRelations(id);
+  // 1) ambil semua hadiah period itu
+  const { data, error: errSel } = await supabaseAdmin
+    .from("spin_prizes")
+    .select("id")
+    .eq("period", period);
+
+  if (errSel)
+    return NextResponse.json({ error: errSel.message }, { status: 400 });
+
+  const ids = (data || []).map((r: any) => String(r.id)).filter(Boolean);
+
+  // 2) hapus relasi (kalau ada)
+  const rel = await tryDeletePrizeRelationsBulk(ids);
   if (rel.error) {
     return NextResponse.json(
       {
@@ -66,13 +76,14 @@ export async function DELETE(req: Request) {
     );
   }
 
-  // ✅ lalu hapus hadiahnya
-  const { error } = await supabaseAdmin
+  // 3) hapus semua hadiah period tsb
+  const { error: errDel } = await supabaseAdmin
     .from("spin_prizes")
     .delete()
-    .eq("id", id);
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    .eq("period", period);
 
-  return NextResponse.json({ ok: true });
+  if (errDel)
+    return NextResponse.json({ error: errDel.message }, { status: 400 });
+
+  return NextResponse.json({ ok: true, deleted: ids.length, period });
 }
