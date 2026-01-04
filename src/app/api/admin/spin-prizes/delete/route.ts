@@ -3,44 +3,6 @@ import { cookies } from "next/headers";
 import { getSessionCookieName, verifySession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-function isMissingTableError(msg?: string) {
-  const m = String(msg || "").toLowerCase();
-  return (
-    m.includes("could not find the table") ||
-    m.includes("schema cache") ||
-    m.includes("relation") // kadang muncul "relation ... does not exist"
-  );
-}
-
-async function tryDeletePrizeRelations(prizeId: string) {
-  // ✅ daftar kandidat tabel relasi hasil spin (kalau salah satu ada, akan kehapus)
-  const candidates = [
-    "spin_results",
-    "spin_logs",
-    "spin_history",
-    "spin_histories",
-    "student_spins",
-    "spins",
-    "spin_winners",
-    "spin_transactions",
-  ];
-
-  for (const table of candidates) {
-    const { error } = await supabaseAdmin
-      .from(table)
-      .delete()
-      .eq("prize_id", prizeId);
-
-    // kalau tabelnya tidak ada -> skip
-    if (error && isMissingTableError(error.message)) continue;
-
-    // kalau error lain (misal RLS/permission) -> stop biar ketahuan
-    if (error) return { table, error };
-  }
-
-  return { table: null, error: null };
-}
-
 export async function DELETE(req: Request) {
   const cookieStore = await cookies();
   const token = cookieStore.get(getSessionCookieName())?.value;
@@ -55,18 +17,7 @@ export async function DELETE(req: Request) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id wajib" }, { status: 400 });
 
-  // ✅ coba hapus relasi dulu (kalau tabelnya ada)
-  const rel = await tryDeletePrizeRelations(id);
-  if (rel.error) {
-    return NextResponse.json(
-      {
-        error: `Gagal hapus relasi hadiah di tabel ${rel.table}: ${rel.error.message}`,
-      },
-      { status: 400 }
-    );
-  }
-
-  // ✅ lalu hapus hadiahnya
+  // ✅ cukup hapus dari spin_prizes
   const { error } = await supabaseAdmin
     .from("spin_prizes")
     .delete()

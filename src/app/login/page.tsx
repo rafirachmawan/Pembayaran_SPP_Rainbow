@@ -481,7 +481,7 @@ export default function LoginPage() {
 
             <div className="hr" />
 
-            <h1 className="h1">Login</h1>
+            <h1 className="h1">Login </h1>
 
             <form onSubmit={onSubmit} className="form">
               <div className="field">
