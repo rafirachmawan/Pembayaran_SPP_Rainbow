@@ -52,6 +52,46 @@ type StudentPaymentDetail = {
   history?: PaymentRow[];
 };
 
+/** =========================
+ * ✅ Multi Cabang (tambahan)
+ * ========================= */
+type Role = "superadmin" | "admin_cabang" | string;
+
+type Branch = {
+  id: string;
+  code: string; // misal: CAB-A / TGA-01
+  name: string; // misal: Cabang Tulungagung
+  address?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+};
+
+type BranchAdmin = {
+  id: string;
+  username: string;
+  name?: string | null;
+  branch_id: string;
+  branch_name?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+};
+
+type PendingPayment = {
+  id: string;
+  student_id?: string | null;
+  nis?: string | null;
+  student_name?: string | null;
+  kelas?: string | null;
+  period: string;
+  amount: number;
+  status: "PENDING" | string;
+  requested_at?: string | null;
+  method?: string | null;
+  ref?: string | null;
+  // optional branch context
+  branch_id?: string | null;
+};
+
 function formatPeriode(yyyyMM?: string) {
   if (!yyyyMM) return "-";
   const [yStr, mStr] = yyyyMM.split("-");
@@ -150,11 +190,48 @@ type SectionKey =
   | "addPrize"
   | "listPrize"
   | "addStudent"
-  | "listStudent";
+  | "listStudent"
+  // ✅ tambahan superadmin
+  | "branchList"
+  | "branchAdd"
+  | "branchAdmins"
+  // ✅ tambahan admin cabang
+  | "approvalSpp";
 
 export default function AdminPage() {
   // ✅ cegah hydration mismatch
   const [mounted, setMounted] = useState(false);
+
+  /** =========================
+   * ✅ Auth context (role & cabang)
+   * - tidak mengubah logika existing, hanya menambahkan kontrol menu & filter cabang
+   * ========================= */
+  const [role, setRole] = useState<Role>("superadmin");
+  const [myBranchId, setMyBranchId] = useState<string | null>(null);
+
+  // superadmin bisa memilih cabang untuk dikelola (opsional)
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
+
+  // form tambah cabang
+  const [branchCode, setBranchCode] = useState("CAB-01");
+  const [branchName, setBranchName] = useState("Cabang Utama");
+  const [branchAddress, setBranchAddress] = useState("Tulungagung");
+
+  // admin cabang
+  const [admins, setAdmins] = useState<BranchAdmin[]>([]);
+  const [loadingAdmins, setLoadingAdmins] = useState(false);
+  const [adminUsername, setAdminUsername] = useState("admin.cabang");
+  const [adminName, setAdminName] = useState("Admin Cabang");
+  const [adminPass, setAdminPass] = useState("123456");
+  const [adminDeletingId, setAdminDeletingId] = useState<string | null>(null);
+
+  // approval spp (admin cabang)
+  const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [actingPaymentId, setActingPaymentId] = useState<string | null>(null);
+  const [pendingQ, setPendingQ] = useState("");
 
   const [period, setPeriod] = useState("2025-12");
   const [amount, setAmount] = useState(200000);
@@ -211,11 +288,305 @@ export default function AdminPage() {
     location.href = "/login";
   }
 
+  /** =========================
+   * ✅ helper query params cabang
+   * ========================= */
+  function branchQs(qs?: URLSearchParams) {
+    const p = qs || new URLSearchParams();
+    // superadmin: pakai activeBranchId kalau dipilih
+    // admin cabang: pakai myBranchId (dikunci)
+    const bid = role === "admin_cabang" ? myBranchId : activeBranchId;
+    if (bid) p.set("branch_id", bid);
+    return p;
+  }
+
+  /** =========================
+   * ✅ Load Me (role & cabang) — additive saja
+   * Endpoint disiapkan di backend:
+   * GET /api/auth/me -> { role, branch_id }
+   * Kalau endpoint belum ada, fallback superadmin (tidak merusak logic)
+   * ========================= */
+  async function loadMe() {
+    try {
+      const res = await fetch("/api/auth/me", { method: "GET" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+
+      const r = String(d?.role || "").toLowerCase();
+      const bid = d?.branch_id ? String(d.branch_id) : null;
+
+      if (r) setRole(r as Role);
+      if (bid) setMyBranchId(bid);
+
+      // default activeBranch:
+      // - admin cabang otomatis pakai cabangnya
+      // - superadmin biarkan null dulu (atau set pertama setelah loadBranches)
+      if (r === "admin_cabang" && bid) {
+        setActiveBranchId(bid);
+      }
+    } catch {
+      // ignore (fallback superadmin)
+    }
+  }
+
+  /** =========================
+   * ✅ Cabang (superadmin)
+   * Endpoint (kita pakai /api/admin/* sesuai project kamu sekarang):
+   * GET    /api/admin/branches/list
+   * POST   /api/admin/branches/create  { code, name, address }
+   * DELETE /api/admin/branches/delete?id=
+   * ========================= */
+  async function loadBranches() {
+    setLoadingBranches(true);
+    const res = await fetch("/api/admin/branches/list");
+    const d = await res.json().catch(() => ({}));
+    setLoadingBranches(false);
+
+    if (!res.ok) {
+      setMsg({ type: "err", text: d?.error || "Gagal ambil list cabang" });
+      setBranches([]);
+      return;
+    }
+
+    const rows = Array.isArray(d?.branches) ? d.branches : [];
+    setBranches(rows);
+
+    // superadmin: kalau belum pilih cabang, set ke cabang pertama biar enak
+    if (role !== "admin_cabang") {
+      if (!activeBranchId && rows?.[0]?.id) {
+        setActiveBranchId(String(rows[0].id));
+      }
+    }
+  }
+
+  async function addBranch() {
+    setMsg(null);
+    const res = await fetch("/api/admin/branches/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: branchCode,
+        name: branchName,
+        address: branchAddress,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return setMsg({ type: "err", text: d?.error || "Gagal tambah cabang" });
+    }
+    setMsg({ type: "ok", text: `Cabang dibuat: ${d?.branch?.name || "-"}` });
+    await loadBranches();
+  }
+
+  async function deleteBranch(id: string) {
+    const ok = confirm(
+      "Yakin hapus cabang ini?\n\nCatatan: pastikan tidak ada admin/siswa terkait."
+    );
+    if (!ok) return;
+
+    setMsg(null);
+    // ✅ (FIX) pakai endpoint admin yang memang ada di project kamu sekarang
+    const res = await fetch(
+      `/api/admin/branches/delete?id=${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    );
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return setMsg({ type: "err", text: d?.error || "Gagal hapus cabang" });
+    }
+    setMsg({ type: "ok", text: "Cabang berhasil dihapus" });
+
+    // kalau yang dihapus adalah cabang terpilih, reset
+    if (activeBranchId === id) setActiveBranchId(null);
+
+    await loadBranches();
+  }
+
+  /** =========================
+   * ✅ Admin Cabang (superadmin)
+   * Endpoint (kita pakai /api/admin/* supaya gak 404 lagi):
+   * GET    /api/admin/branch-admins/list?branch_id=
+   * POST   /api/admin/branch-admins/create { branch_id, username, name, password }
+   * DELETE /api/admin/branch-admins/delete?id=
+   * ========================= */
+  async function loadBranchAdmins() {
+    setLoadingAdmins(true);
+
+    const qs = branchQs(new URLSearchParams());
+    // ✅ (FIX) endpoint admin
+    const res = await fetch(`/api/admin/branch-admins/list?${qs}`);
+    const d = await res.json().catch(() => ({}));
+    setLoadingAdmins(false);
+
+    if (!res.ok) {
+      setMsg({
+        type: "err",
+        text: d?.error || "Gagal ambil list admin cabang",
+      });
+      setAdmins([]);
+      return;
+    }
+
+    setAdmins(Array.isArray(d?.admins) ? d.admins : []);
+  }
+
+  async function addBranchAdmin() {
+    if (!activeBranchId) {
+      return setMsg({
+        type: "err",
+        text: "Pilih cabang dulu untuk membuat admin cabang.",
+      });
+    }
+
+    setMsg(null);
+    // ✅ (FIX) endpoint admin
+    const res = await fetch("/api/admin/branch-admins/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        branch_id: activeBranchId,
+        username: adminUsername,
+        name: adminName,
+        password: adminPass,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return setMsg({
+        type: "err",
+        text: d?.error || "Gagal tambah admin cabang",
+      });
+    }
+
+    setMsg({
+      type: "ok",
+      text: `Admin cabang dibuat: ${d?.username || adminUsername}`,
+    });
+    await loadBranchAdmins();
+  }
+
+  async function deleteBranchAdmin(a: BranchAdmin) {
+    const ok = confirm(
+      `Yakin hapus admin cabang ini?\n\n${a.username} • ${
+        a.branch_name || a.branch_id
+      }`
+    );
+    if (!ok) return;
+
+    setMsg(null);
+    setAdminDeletingId(a.id);
+
+    // ✅ (FIX) endpoint admin
+    const res = await fetch(
+      `/api/admin/branch-admins/delete?id=${encodeURIComponent(a.id)}`,
+      { method: "DELETE" }
+    );
+    const d = await res.json().catch(() => ({}));
+
+    setAdminDeletingId(null);
+
+    if (!res.ok) {
+      return setMsg({
+        type: "err",
+        text: d?.error || "Gagal hapus admin cabang",
+      });
+    }
+
+    setMsg({ type: "ok", text: "Admin cabang berhasil dihapus" });
+    await loadBranchAdmins();
+  }
+
+  /** =========================
+   * ✅ Approval bayar SPP (admin cabang)
+   * Endpoint disiapkan di backend:
+   * GET  /api/cabang/payments/pending?branch_id=&q=
+   * POST /api/cabang/payments/approve { payment_id }
+   * POST /api/cabang/payments/reject  { payment_id }
+   * ========================= */
+  async function loadPendingPayments() {
+    setLoadingPending(true);
+
+    const qs = branchQs(new URLSearchParams());
+    if (pendingQ.trim()) qs.set("q", pendingQ.trim());
+
+    const res = await fetch(`/api/cabang/payments/pending?${qs}`);
+    const d = await res.json().catch(() => ({}));
+    setLoadingPending(false);
+
+    if (!res.ok) {
+      setMsg({
+        type: "err",
+        text: d?.error || "Gagal ambil pending pembayaran",
+      });
+      setPendingPayments([]);
+      return;
+    }
+
+    setPendingPayments(Array.isArray(d?.payments) ? d.payments : []);
+  }
+
+  async function approvePayment(id: string) {
+    const ok = confirm("Approve pembayaran ini?");
+    if (!ok) return;
+
+    setMsg(null);
+    setActingPaymentId(id);
+
+    const res = await fetch("/api/cabang/payments/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payment_id: id }),
+    });
+    const d = await res.json().catch(() => ({}));
+
+    setActingPaymentId(null);
+
+    if (!res.ok) {
+      return setMsg({
+        type: "err",
+        text: d?.error || "Gagal approve pembayaran",
+      });
+    }
+
+    setMsg({ type: "ok", text: "Pembayaran di-approve ✅" });
+    await loadPendingPayments();
+  }
+
+  async function rejectPayment(id: string) {
+    const ok = confirm("Reject pembayaran ini?");
+    if (!ok) return;
+
+    setMsg(null);
+    setActingPaymentId(id);
+
+    const res = await fetch("/api/cabang/payments/reject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payment_id: id }),
+    });
+    const d = await res.json().catch(() => ({}));
+
+    setActingPaymentId(null);
+
+    if (!res.ok) {
+      return setMsg({
+        type: "err",
+        text: d?.error || "Gagal reject pembayaran",
+      });
+    }
+
+    setMsg({ type: "ok", text: "Pembayaran di-reject 🧾" });
+    await loadPendingPayments();
+  }
+
   async function loadPrizes() {
     setLoadingList(true);
-    const res = await fetch(
-      `/api/admin/spin-prizes/list?period=${encodeURIComponent(period)}`
-    );
+
+    // ✅ tetap endpoint lama, hanya menambahkan branch_id jika ada (tidak mengubah logic inti)
+    const qs = branchQs(new URLSearchParams());
+    qs.set("period", period);
+
+    const res = await fetch(`/api/admin/spin-prizes/list?${qs.toString()}`);
     const d = await res.json().catch(() => ({}));
     setLoadingList(false);
 
@@ -229,10 +600,16 @@ export default function AdminPage() {
 
   async function setSpp() {
     setMsg(null);
+
+    const body: any = { period, amount, spin_deadline_day: deadline };
+    // ✅ kirim branch_id opsional
+    const bid = role === "admin_cabang" ? myBranchId : activeBranchId;
+    if (bid) body.branch_id = bid;
+
     const res = await fetch("/api/admin/spp/set", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ period, amount, spin_deadline_day: deadline }),
+      body: JSON.stringify(body),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
@@ -249,11 +626,15 @@ export default function AdminPage() {
   async function addPrize() {
     setMsg(null);
 
+    const body: any = { period, label, type, value, quota, weight };
+    const bid = role === "admin_cabang" ? myBranchId : activeBranchId;
+    if (bid) body.branch_id = bid;
+
     const res = await fetch("/api/admin/spin-prizes/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // ✅ kirim weight ke backend
-      body: JSON.stringify({ period, label, type, value, quota, weight }),
+      body: JSON.stringify(body),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
@@ -268,10 +649,13 @@ export default function AdminPage() {
     if (!ok) return;
 
     setMsg(null);
-    const res = await fetch(
-      `/api/admin/spin-prizes/delete?id=${encodeURIComponent(id)}`,
-      { method: "DELETE" }
-    );
+
+    const qs = branchQs(new URLSearchParams());
+    qs.set("id", id);
+
+    const res = await fetch(`/api/admin/spin-prizes/delete?${qs.toString()}`, {
+      method: "DELETE",
+    });
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
       return setMsg({ type: "err", text: d?.error || "Gagal hapus hadiah" });
@@ -289,10 +673,13 @@ export default function AdminPage() {
 
     setMsg(null);
     setClearingPrizes(true);
-    const res = await fetch(
-      `/api/admin/spin-prizes/clear?period=${encodeURIComponent(period)}`,
-      { method: "DELETE" }
-    );
+
+    const qs = branchQs(new URLSearchParams());
+    qs.set("period", period);
+
+    const res = await fetch(`/api/admin/spin-prizes/clear?${qs.toString()}`, {
+      method: "DELETE",
+    });
     const d = await res.json().catch(() => ({}));
     setClearingPrizes(false);
 
@@ -309,9 +696,11 @@ export default function AdminPage() {
 
   async function loadStudents() {
     setLoadingStudents(true);
-    const res = await fetch(
-      `/api/admin/students/list?q=${encodeURIComponent(studentQ)}`
-    );
+
+    const qs = branchQs(new URLSearchParams());
+    if (studentQ) qs.set("q", studentQ);
+
+    const res = await fetch(`/api/admin/students/list?${qs.toString()}`);
     const d = await res.json().catch(() => ({}));
     setLoadingStudents(false);
 
@@ -325,10 +714,15 @@ export default function AdminPage() {
 
   async function addStudent() {
     setMsg(null);
+
+    const body: any = { nis, nama, kelas, password: pass };
+    const bid = role === "admin_cabang" ? myBranchId : activeBranchId;
+    if (bid) body.branch_id = bid;
+
     const res = await fetch("/api/admin/students/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nis, nama, kelas, password: pass }),
+      body: JSON.stringify(body),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok)
@@ -352,7 +746,7 @@ export default function AdminPage() {
     setMsg(null);
     setDeletingStudentId(String(s.id || s.nis));
 
-    const qs = new URLSearchParams();
+    const qs = branchQs(new URLSearchParams());
     if (s.id) qs.set("student_id", s.id);
     qs.set("nis", s.nis);
 
@@ -386,7 +780,7 @@ export default function AdminPage() {
     setDetailLoading(true);
 
     try {
-      const qs = new URLSearchParams();
+      const qs = branchQs(new URLSearchParams());
       if (s.id) qs.set("student_id", s.id);
       qs.set("nis", s.nis);
 
@@ -434,11 +828,26 @@ export default function AdminPage() {
     setDetailLoading(false);
   }
 
+  // ✅ init role & cabang context
+  useEffect(() => {
+    loadMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ✅ load cabang kalau superadmin
+  useEffect(() => {
+    if (!mounted) return;
+    if (role === "superadmin") {
+      loadBranches();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, mounted]);
+
   // reload list hadiah saat period berubah
   useEffect(() => {
     loadPrizes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
+  }, [period, activeBranchId, myBranchId, role]);
 
   // auto-load siswa saat buka addStudent / listStudent
   useEffect(() => {
@@ -446,7 +855,33 @@ export default function AdminPage() {
       loadStudents();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection]);
+  }, [activeSection, activeBranchId, myBranchId, role]);
+
+  // auto-load admin cabang
+  useEffect(() => {
+    if (activeSection === "branchAdmins") {
+      loadBranchAdmins();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, activeBranchId, role]);
+
+  // auto-load cabang list saat buka menu cabang
+  useEffect(() => {
+    if (role === "superadmin") {
+      if (activeSection === "branchList" || activeSection === "branchAdd") {
+        loadBranches();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, role]);
+
+  // auto-load pending approvals
+  useEffect(() => {
+    if (activeSection === "approvalSpp") {
+      loadPendingPayments();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, activeBranchId, myBranchId, role]);
 
   // ✅ auto set NIS 0001.. saat students berubah (khusus addStudent)
   useEffect(() => {
@@ -462,6 +897,43 @@ export default function AdminPage() {
     0
   );
 
+  /** =========================
+   * ✅ Menu dinamis berdasarkan role
+   * - superadmin: semua + cabang/admin cabang
+   * - admin cabang: siswa + approval
+   * ========================= */
+  const menu = useMemo(() => {
+    if (role === "admin_cabang") {
+      return [
+        { key: "dashboard" as const, label: "Dashboard" },
+        { key: "addStudent" as const, label: "Tambah Siswa" },
+        { key: "listStudent" as const, label: "List Siswa" },
+        { key: "approvalSpp" as const, label: "Approval Bayar SPP" },
+        { key: "setSpp" as const, label: "Set SPP" },
+        { key: "addPrize" as const, label: "Tambah Hadiah" },
+        { key: "listPrize" as const, label: "List Hadiah" },
+      ];
+    }
+
+    // default: superadmin
+    return [
+      { key: "dashboard" as const, label: "Dashboard" },
+
+      // ✅ cabang management
+      { key: "branchList" as const, label: "List Cabang" },
+      { key: "branchAdd" as const, label: "Tambah Cabang" },
+      { key: "branchAdmins" as const, label: "Admin Cabang" },
+
+      // ✅ existing
+      { key: "setSpp" as const, label: "Set SPP" },
+      { key: "addPrize" as const, label: "Tambah Hadiah" },
+      { key: "listPrize" as const, label: "List Hadiah" },
+      { key: "addStudent" as const, label: "Tambah Siswa" },
+      { key: "listStudent" as const, label: "List Siswa" },
+    ];
+  }, [role]);
+
+  // ✅ mencegah mismatch: render hanya setelah mounted
   // ✅ Map peluang (%) per hadiah berdasarkan weight
   const chanceInfo = useMemo(() => buildChanceMap(prizes), [prizes]);
   const chanceMap = chanceInfo.map;
@@ -471,18 +943,18 @@ export default function AdminPage() {
     if (typeof window !== "undefined") window.scrollTo({ top: 0 });
   }
 
-  const menu = [
-    { key: "dashboard" as const, label: "Dashboard" },
-    { key: "setSpp" as const, label: "Set SPP" },
-    { key: "addPrize" as const, label: "Tambah Hadiah" },
-    { key: "listPrize" as const, label: "List Hadiah" },
-    { key: "addStudent" as const, label: "Tambah Siswa" },
-    { key: "listStudent" as const, label: "List Siswa" },
-  ];
+  /** ✅ branchLabel (PINDAH KE ATAS!) */
+  const branchLabel = useMemo(() => {
+    const bid = role === "admin_cabang" ? myBranchId : activeBranchId;
+    if (!bid) return "Semua / Belum dipilih";
+    const b = branches.find((x) => String(x.id) === String(bid));
+    return b ? `${b.name} (${b.code})` : `Branch: ${bid}`;
+  }, [role, myBranchId, activeBranchId, branches]);
 
   // ✅ mencegah mismatch: render hanya setelah mounted
   if (!mounted) return null;
 
+  // (ini bukan hook, aman setelah return)
   const currentStatus = String(
     studentPayDetail?.current?.status || ""
   ).toUpperCase();
@@ -605,10 +1077,13 @@ export default function AdminPage() {
           display: flex;
           align-items: center;
           gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
         }
 
         .primaryBtn,
-        .dangerBtn {
+        .dangerBtn,
+        .ghostBtn {
           height: 40px;
           padding: 0 12px;
           border-radius: 12px;
@@ -626,7 +1101,8 @@ export default function AdminPage() {
             box-shadow 0.15s ease, border-color 0.15s ease;
         }
         .primaryBtn:active,
-        .dangerBtn:active {
+        .dangerBtn:active,
+        .ghostBtn:active {
           transform: translateY(1px);
         }
 
@@ -647,6 +1123,10 @@ export default function AdminPage() {
         }
         .dangerBtn:hover {
           box-shadow: 0 10px 24px rgba(239, 68, 68, 0.12);
+        }
+
+        .ghostBtn {
+          background: rgba(15, 23, 42, 0.02);
         }
 
         .layout {
@@ -831,16 +1311,27 @@ export default function AdminPage() {
         }
 
         .field input,
-        .field select {
-          height: 42px;
+        .field select,
+        .field textarea {
           border-radius: 12px;
           border: 1px solid var(--line);
-          padding: 0 12px;
+          padding: 10px 12px;
           font-size: 13.5px;
           outline: none;
           background: #fff;
           font-weight: 650;
           letter-spacing: -0.01em;
+        }
+
+        .field input,
+        .field select {
+          height: 42px;
+          padding: 0 12px;
+        }
+
+        .field textarea {
+          min-height: 90px;
+          resize: vertical;
         }
 
         .field input::placeholder {
@@ -849,7 +1340,8 @@ export default function AdminPage() {
         }
 
         .field input:focus,
-        .field select:focus {
+        .field select:focus,
+        .field textarea:focus {
           border-color: rgba(37, 99, 235, 0.38);
           box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
         }
@@ -927,6 +1419,11 @@ export default function AdminPage() {
           background: rgba(239, 68, 68, 0.1);
           color: rgba(220, 38, 38, 1);
           border-color: rgba(239, 68, 68, 0.18);
+        }
+        .pillGray {
+          background: rgba(100, 116, 139, 0.1);
+          color: rgba(71, 85, 105, 1);
+          border-color: rgba(100, 116, 139, 0.18);
         }
 
         .chanceBar {
@@ -1025,6 +1522,7 @@ export default function AdminPage() {
           justify-content: flex-end;
           gap: 10px;
           background: rgba(15, 23, 42, 0.015);
+          flex-wrap: wrap;
         }
 
         @media (max-width: 980px) {
@@ -1066,11 +1564,44 @@ export default function AdminPage() {
               </div>
               <div className="brandText">
                 <b>SPP SHINING SUN</b>
-                <span>Super Admin Panel</span>
+                <span>
+                  {role === "admin_cabang"
+                    ? "Admin Cabang Panel"
+                    : "Super Admin Panel"}
+                </span>
               </div>
             </div>
 
             <div className="headerRight">
+              {/* ✅ selector cabang (superadmin) / info cabang (admin cabang) */}
+              <span className="pill" title="Konteks Cabang aktif">
+                🏢 {branchLabel}
+              </span>
+
+              {role === "superadmin" ? (
+                <select
+                  value={activeBranchId || ""}
+                  onChange={(e) => setActiveBranchId(e.target.value || null)}
+                  style={{
+                    height: 40,
+                    borderRadius: 12,
+                    border: "1px solid var(--line)",
+                    padding: "0 10px",
+                    fontWeight: 850,
+                    letterSpacing: "-0.01em",
+                    background: "#fff",
+                  }}
+                  title="Pilih Cabang untuk dikelola (opsional)"
+                >
+                  <option value="">(Pilih Cabang)</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.code})
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
               <button className="dangerBtn" onClick={logout}>
                 Logout
               </button>
@@ -1082,7 +1613,9 @@ export default function AdminPage() {
           <aside className="sidebar">
             <div className="sidebarTop">
               <h3>Navigation</h3>
-              <span className="pill">Admin</span>
+              <span className="pill">
+                {role === "admin_cabang" ? "Admin Cabang" : "Super Admin"}
+              </span>
             </div>
 
             <div className="sideMenu">
@@ -1100,6 +1633,30 @@ export default function AdminPage() {
                   </button>
                 );
               })}
+            </div>
+
+            {/* ✅ quick tools */}
+            <div className="divider" style={{ margin: 0 }} />
+            <div className="sideMenu" style={{ paddingTop: 12 }}>
+              {role === "superadmin" ? (
+                <button
+                  className="ghostBtn"
+                  type="button"
+                  onClick={loadBranches}
+                  style={{ justifyContent: "center" }}
+                >
+                  {loadingBranches ? "Memuat cabang..." : "Refresh Cabang"}
+                </button>
+              ) : (
+                <button
+                  className="ghostBtn"
+                  type="button"
+                  onClick={loadMe}
+                  style={{ justifyContent: "center" }}
+                >
+                  Refresh Session
+                </button>
+              )}
             </div>
           </aside>
 
@@ -1121,10 +1678,14 @@ export default function AdminPage() {
               <section className="card">
                 <div className="titleRow">
                   <div>
-                    <h1>Dashboard Super Admin</h1>
+                    <h1>
+                      Dashboard{" "}
+                      {role === "admin_cabang" ? "Admin Cabang" : "Super Admin"}
+                    </h1>
                     <p className="sub">
-                      Panel ringkas untuk mengelola SPP period aktif, Lucky
-                      Spin, dan akun siswa.
+                      {role === "admin_cabang"
+                        ? "Kelola siswa cabang & approval pembayaran SPP."
+                        : "Panel ringkas untuk mengelola cabang, admin cabang, SPP period aktif, Lucky Spin, dan akun siswa."}
                     </p>
                   </div>
                   <span className="pill">{periodLabel}</span>
@@ -1134,15 +1695,19 @@ export default function AdminPage() {
 
                 <div className="kpis">
                   <div className="kpiBox">
-                    <div className="kpiLabel">Period</div>
-                    <div className="kpiValue">{periodLabel}</div>
+                    <div className="kpiLabel">Role</div>
+                    <div className="kpiValue">
+                      {role === "admin_cabang" ? "Admin Cabang" : "Super Admin"}
+                    </div>
                   </div>
+
                   <div className="kpiBox">
-                    <div className="kpiLabel">Total Hadiah</div>
-                    <div className="kpiValue">{totalHadiah}</div>
+                    <div className="kpiLabel">Cabang Aktif</div>
+                    <div className="kpiValue">{branchLabel}</div>
                   </div>
+
                   <div className="kpiBox">
-                    <div className="kpiLabel">Sisa Kuota</div>
+                    <div className="kpiLabel">Sisa Kuota Hadiah</div>
                     <div className="kpiValue">{totalSisa}</div>
                   </div>
                 </div>
@@ -1155,6 +1720,490 @@ export default function AdminPage() {
               </section>
             ) : null}
 
+            {/* =========================
+             * ✅ SUPERADMIN: LIST CABANG
+             * ========================= */}
+            {activeSection === "branchList" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>List Cabang</h2>
+                    <p className="sub">
+                      Kelola cabang sekolah. Pilih cabang di header untuk
+                      konteks pengelolaan SPP/Spin/Siswa.
+                    </p>
+                  </div>
+                  <span className="pill">
+                    {loadingBranches
+                      ? "Memuat..."
+                      : `${branches.length} cabang`}
+                  </span>
+                </div>
+
+                <div className="divider" />
+
+                {branches.length === 0 ? (
+                  <p className="hint">
+                    Belum ada cabang. Buka menu <b>Tambah Cabang</b>.
+                  </p>
+                ) : (
+                  <div className="tableWrap">
+                    <table style={{ minWidth: 920 }}>
+                      <thead>
+                        <tr>
+                          <th>Nama</th>
+                          <th>Kode</th>
+                          <th>Alamat</th>
+                          <th>Status</th>
+                          <th>ID</th>
+                          <th>Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {branches.map((b) => (
+                          <tr key={b.id}>
+                            <td>
+                              <b>{b.name}</b>
+                            </td>
+                            <td>
+                              <span className="pill">{b.code}</span>
+                            </td>
+                            <td style={{ color: "var(--muted)" }}>
+                              {b.address || "-"}
+                            </td>
+                            <td>
+                              <span
+                                className={`pill ${
+                                  b.is_active === false
+                                    ? "pillRed"
+                                    : "pillGreen"
+                                }`}
+                              >
+                                {b.is_active === false ? "Nonaktif" : "Aktif"}
+                              </span>
+                            </td>
+                            <td
+                              style={{
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                                fontSize: 12.5,
+                                color: "var(--muted)",
+                              }}
+                            >
+                              {b.id}
+                            </td>
+                            <td style={{ display: "flex", gap: 8 }}>
+                              <button
+                                className="ghostBtn"
+                                type="button"
+                                onClick={() => {
+                                  setActiveBranchId(b.id);
+                                  setMsg({
+                                    type: "ok",
+                                    text: `Cabang aktif: ${b.name} (${b.code})`,
+                                  });
+                                }}
+                                style={{ height: 36, padding: "0 10px" }}
+                              >
+                                Pilih
+                              </button>
+                              <button
+                                className="dangerBtn"
+                                type="button"
+                                onClick={() => deleteBranch(b.id)}
+                                style={{ height: 36, padding: "0 10px" }}
+                              >
+                                Hapus
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {/* =========================
+             * ✅ SUPERADMIN: TAMBAH CABANG
+             * ========================= */}
+            {activeSection === "branchAdd" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>Tambah Cabang</h2>
+                    <p className="sub">
+                      Buat cabang baru. Setelah dibuat, kamu bisa buat{" "}
+                      <b>Admin Cabang</b> untuk cabang tersebut.
+                    </p>
+                  </div>
+                  <span className="pill">Super Admin</span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>Kode Cabang</label>
+                    <input
+                      value={branchCode}
+                      onChange={(e) => setBranchCode(e.target.value)}
+                      placeholder="CAB-01"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Nama Cabang</label>
+                    <input
+                      value={branchName}
+                      onChange={(e) => setBranchName(e.target.value)}
+                      placeholder="Cabang Tulungagung"
+                    />
+                  </div>
+
+                  <div className="field" style={{ gridColumn: "1 / -1" }}>
+                    <label>Alamat (opsional)</label>
+                    <textarea
+                      value={branchAddress}
+                      onChange={(e) => setBranchAddress(e.target.value)}
+                      placeholder="Alamat cabang..."
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="primaryBtn"
+                      onClick={addBranch}
+                      type="button"
+                    >
+                      Buat Cabang
+                    </button>
+                  </div>
+                </div>
+
+                <p className="hint">
+                  Setelah cabang dibuat, masuk menu <b>Admin Cabang</b> untuk
+                  membuat akun admin cabang.
+                </p>
+              </section>
+            ) : null}
+
+            {/* =========================
+             * ✅ SUPERADMIN: ADMIN CABANG
+             * ========================= */}
+            {activeSection === "branchAdmins" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>Admin Cabang</h2>
+                    <p className="sub">
+                      Buat & kelola akun admin cabang untuk cabang terpilih.
+                    </p>
+                  </div>
+                  <span className="pill">{branchLabel}</span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>Cabang (wajib)</label>
+                    <select
+                      value={activeBranchId || ""}
+                      onChange={(e) =>
+                        setActiveBranchId(e.target.value || null)
+                      }
+                    >
+                      <option value="">(Pilih Cabang)</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} ({b.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Username admin cabang</label>
+                    <input
+                      value={adminUsername}
+                      onChange={(e) => setAdminUsername(e.target.value)}
+                      placeholder="admin.cabang"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Nama</label>
+                    <input
+                      value={adminName}
+                      onChange={(e) => setAdminName(e.target.value)}
+                      placeholder="Admin Cabang"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label>Password awal</label>
+                    <input
+                      value={adminPass}
+                      onChange={(e) => setAdminPass(e.target.value)}
+                      placeholder="123456"
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="primaryBtn"
+                      onClick={addBranchAdmin}
+                      type="button"
+                    >
+                      Buat Admin Cabang
+                    </button>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "end" }}>
+                    <button
+                      className="ghostBtn"
+                      onClick={loadBranchAdmins}
+                      type="button"
+                      style={{ justifyContent: "center" }}
+                    >
+                      {loadingAdmins ? "Memuat..." : "Refresh List Admin"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="divider" style={{ marginTop: 16 }} />
+
+                {admins.length === 0 ? (
+                  <p className="hint">
+                    Belum ada admin cabang untuk cabang ini. Buat admin di atas.
+                  </p>
+                ) : (
+                  <div className="tableWrap">
+                    <table style={{ minWidth: 920 }}>
+                      <thead>
+                        <tr>
+                          <th>Username</th>
+                          <th>Nama</th>
+                          <th>Cabang</th>
+                          <th>Status</th>
+                          <th>ID</th>
+                          <th>Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {admins.map((a) => (
+                          <tr key={a.id}>
+                            <td>
+                              <b>{a.username}</b>
+                            </td>
+                            <td>{a.name || "-"}</td>
+                            <td>
+                              <span className="pill">
+                                {a.branch_name || a.branch_id}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={`pill ${
+                                  a.is_active === false
+                                    ? "pillRed"
+                                    : "pillGreen"
+                                }`}
+                              >
+                                {a.is_active === false ? "Nonaktif" : "Aktif"}
+                              </span>
+                            </td>
+                            <td
+                              style={{
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                                fontSize: 12.5,
+                                color: "var(--muted)",
+                              }}
+                            >
+                              {a.id}
+                            </td>
+                            <td>
+                              <button
+                                className="dangerBtn"
+                                type="button"
+                                style={{ height: 36, padding: "0 10px" }}
+                                disabled={adminDeletingId === a.id}
+                                onClick={() => deleteBranchAdmin(a)}
+                              >
+                                {adminDeletingId === a.id ? "..." : "Hapus"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <p className="hint">
+                  Catatan: akses admin cabang dibatasi hanya ke siswa & approval
+                  pembayaran SPP untuk cabangnya.
+                </p>
+              </section>
+            ) : null}
+
+            {/* =========================
+             * ✅ ADMIN CABANG: APPROVAL SPP
+             * ========================= */}
+            {activeSection === "approvalSpp" ? (
+              <section className="card">
+                <div className="titleRow">
+                  <div>
+                    <h2>Approval Bayar SPP</h2>
+                    <p className="sub">
+                      Lihat pembayaran <b>PENDING</b> dan lakukan
+                      approve/reject.
+                    </p>
+                  </div>
+                  <span className="pill">
+                    {loadingPending
+                      ? "Memuat..."
+                      : `${pendingPayments.length} pending`}
+                  </span>
+                </div>
+
+                <div className="divider" />
+
+                <div className="formGrid2">
+                  <div className="field">
+                    <label>Cari</label>
+                    <input
+                      value={pendingQ}
+                      onChange={(e) => setPendingQ(e.target.value)}
+                      placeholder="NIS / Nama / Kelas / Ref"
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "end", gap: 10 }}>
+                    <button
+                      className="primaryBtn"
+                      type="button"
+                      onClick={loadPendingPayments}
+                    >
+                      Tampilkan
+                    </button>
+                    <button
+                      className="ghostBtn"
+                      type="button"
+                      onClick={() => {
+                        setPendingQ("");
+                        loadPendingPayments();
+                      }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                {pendingPayments.length === 0 ? (
+                  <p className="hint">
+                    Tidak ada pembayaran pending untuk cabang ini.
+                  </p>
+                ) : (
+                  <div className="tableWrap">
+                    <table style={{ minWidth: 980 }}>
+                      <thead>
+                        <tr>
+                          <th>Siswa</th>
+                          <th>NIS</th>
+                          <th>Kelas</th>
+                          <th>Periode</th>
+                          <th>Nominal</th>
+                          <th>Metode</th>
+                          <th>Ref</th>
+                          <th>Request</th>
+                          <th>Status</th>
+                          <th>Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingPayments.map((p) => (
+                          <tr key={p.id}>
+                            <td>
+                              <b>{p.student_name || "-"}</b>
+                            </td>
+                            <td>{p.nis || "-"}</td>
+                            <td>
+                              <span
+                                className="pill"
+                                style={{ fontWeight: 900 }}
+                              >
+                                {p.kelas || "-"}
+                              </span>
+                            </td>
+                            <td>
+                              <b>{formatPeriode(p.period)}</b>
+                            </td>
+                            <td>
+                              Rp {Number(p.amount || 0).toLocaleString("id-ID")}
+                            </td>
+                            <td>{p.method || "-"}</td>
+                            <td
+                              style={{
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                                fontSize: 12.5,
+                                color: "var(--muted)",
+                              }}
+                            >
+                              {p.ref || "-"}
+                            </td>
+                            <td>
+                              {p.requested_at
+                                ? new Date(p.requested_at).toLocaleString(
+                                    "id-ID"
+                                  )
+                                : "-"}
+                            </td>
+                            <td>
+                              <span className="pill">
+                                {String(p.status || "").toUpperCase()}
+                              </span>
+                            </td>
+                            <td style={{ display: "flex", gap: 8 }}>
+                              <button
+                                className="primaryBtn"
+                                type="button"
+                                style={{ height: 36, padding: "0 10px" }}
+                                disabled={actingPaymentId === p.id}
+                                onClick={() => approvePayment(p.id)}
+                              >
+                                {actingPaymentId === p.id ? "..." : "Approve"}
+                              </button>
+                              <button
+                                className="dangerBtn"
+                                type="button"
+                                style={{ height: 36, padding: "0 10px" }}
+                                disabled={actingPaymentId === p.id}
+                                onClick={() => rejectPayment(p.id)}
+                              >
+                                {actingPaymentId === p.id ? "..." : "Reject"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <p className="hint">
+                  Setelah approve, status periode aktif siswa akan berubah
+                  menjadi <b>PAID</b> dan tidak muncul di daftar pending.
+                </p>
+              </section>
+            ) : null}
+
+            {/* =========================
+             * ✅ EXISTING SECTIONS (tetap)
+             * ========================= */}
             {activeSection === "setSpp" ? (
               <section className="card">
                 <div className="titleRow">
@@ -1763,7 +2812,7 @@ export default function AdminPage() {
                           currentStatus === "PAID"
                             ? "pillGreen"
                             : currentStatus === "PENDING"
-                            ? ""
+                            ? "pillGray"
                             : "pillRed"
                         }`}
                         style={{ fontWeight: 950 }}

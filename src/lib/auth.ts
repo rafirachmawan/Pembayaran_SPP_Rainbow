@@ -3,11 +3,21 @@ import { SignJWT, jwtVerify } from "jose";
 const secret = new TextEncoder().encode(process.env.JWT_SECRET!);
 const COOKIE_NAME = "spp_session";
 
+export type SessionRole = "SUPER_ADMIN" | "SISWA" | "ADMIN_CABANG";
+
 export type SessionPayload = {
   uid: string;
-  role: "SUPER_ADMIN" | "SISWA";
+  role: SessionRole;
+
+  // ✅ tetap dipakai untuk login siswa / user lama
   studentId: string | null;
+
+  // ✅ username tetap
   username: string;
+
+  // ✅ tambahan untuk admin cabang (optional biar gak ganggu sistem lama)
+  branch_id?: string | null;
+  name?: string | null;
 };
 
 export function getSessionCookieName() {
@@ -15,7 +25,7 @@ export function getSessionCookieName() {
 }
 
 export async function signSession(payload: SessionPayload) {
-  return new SignJWT(payload)
+  return new SignJWT(payload as any)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
