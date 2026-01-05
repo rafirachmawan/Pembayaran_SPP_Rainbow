@@ -496,6 +496,9 @@ export default function AdminPage() {
   return (
     <>
       <style jsx global>{`
+        /* ✅ Samakan font persis seperti Login */
+        @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap");
+
         :root {
           --bg: #f6f8fc;
           --card: #ffffff;
@@ -522,10 +525,18 @@ export default function AdminPage() {
           box-sizing: border-box;
         }
 
+        /* ✅ Typography baseline (sama) */
         body {
-          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
-            "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
-          letter-spacing: -0.01em;
+          font-family: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui,
+            -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial,
+            "Noto Sans", "Liberation Sans", sans-serif;
+
+          letter-spacing: -0.012em;
+          text-rendering: geometricPrecision;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+          font-feature-settings: "ss01" 1, "cv02" 1, "cv03" 1, "cv04" 1,
+            "cv11" 1;
         }
 
         .appShell {
@@ -578,13 +589,16 @@ export default function AdminPage() {
 
         .brandText b {
           font-size: 15.5px;
-          letter-spacing: -0.02em;
+          font-weight: 900;
+          letter-spacing: -0.03em;
         }
 
         .brandText span {
           font-size: 12px;
+          font-weight: 650;
           color: var(--muted);
           margin-top: 3px;
+          letter-spacing: -0.01em;
         }
 
         .headerRight {
@@ -602,20 +616,28 @@ export default function AdminPage() {
           background: #fff;
           color: var(--text);
           font-size: 13px;
-          font-weight: 600;
+          font-weight: 850;
+          letter-spacing: -0.01em;
           display: inline-flex;
           align-items: center;
           gap: 8px;
           cursor: pointer;
+          transition: transform 0.05s ease, background 0.15s ease,
+            box-shadow 0.15s ease, border-color 0.15s ease;
+        }
+        .primaryBtn:active,
+        .dangerBtn:active {
+          transform: translateY(1px);
         }
 
         .primaryBtn {
-          background: var(--primary);
+          background: linear-gradient(180deg, var(--primary), var(--primary-2));
           border-color: rgba(37, 99, 235, 0.25);
           color: #fff;
+          box-shadow: 0 14px 30px rgba(37, 99, 235, 0.18);
         }
         .primaryBtn:hover {
-          background: var(--primary-2);
+          filter: brightness(1.02);
         }
 
         .dangerBtn {
@@ -659,7 +681,8 @@ export default function AdminPage() {
         .sidebarTop h3 {
           margin: 0;
           font-size: 14px;
-          letter-spacing: -0.01em;
+          font-weight: 900;
+          letter-spacing: -0.02em;
         }
 
         .pill {
@@ -671,8 +694,9 @@ export default function AdminPage() {
           color: rgba(37, 99, 235, 1);
           border: 1px solid rgba(37, 99, 235, 0.12);
           font-size: 12px;
-          font-weight: 700;
+          font-weight: 900;
           white-space: nowrap;
+          letter-spacing: -0.01em;
         }
 
         .sideMenu {
@@ -687,14 +711,17 @@ export default function AdminPage() {
           border: 1px solid var(--line);
           background: #fff;
           color: var(--text);
-          font-weight: 700;
+          font-weight: 900;
           font-size: 13px;
+          letter-spacing: -0.01em;
           cursor: pointer;
           text-align: left;
           padding: 0 12px;
           display: flex;
           align-items: center;
           justify-content: space-between;
+          transition: box-shadow 0.15s ease, border-color 0.15s ease,
+            background 0.15s ease;
         }
 
         .menuBtn:hover {
@@ -732,7 +759,8 @@ export default function AdminPage() {
         .titleRow h1,
         .titleRow h2 {
           margin: 0;
-          letter-spacing: -0.02em;
+          letter-spacing: -0.03em;
+          font-weight: 950;
         }
 
         .titleRow h1 {
@@ -746,7 +774,9 @@ export default function AdminPage() {
           color: var(--muted);
           margin: 6px 0 0;
           font-size: 13.5px;
-          line-height: 1.5;
+          line-height: 1.55;
+          font-weight: 650;
+          letter-spacing: -0.01em;
         }
 
         .divider {
@@ -771,14 +801,15 @@ export default function AdminPage() {
         .kpiLabel {
           color: var(--muted);
           font-size: 12px;
-          font-weight: 600;
+          font-weight: 800;
           margin-bottom: 4px;
+          letter-spacing: -0.01em;
         }
 
         .kpiValue {
           font-size: 18px;
-          font-weight: 800;
-          letter-spacing: -0.02em;
+          font-weight: 950;
+          letter-spacing: -0.03em;
         }
 
         .formGrid2 {
@@ -795,7 +826,8 @@ export default function AdminPage() {
         .field label {
           font-size: 12.5px;
           color: var(--muted);
-          font-weight: 700;
+          font-weight: 850;
+          letter-spacing: -0.01em;
         }
 
         .field input,
@@ -807,19 +839,28 @@ export default function AdminPage() {
           font-size: 13.5px;
           outline: none;
           background: #fff;
+          font-weight: 650;
+          letter-spacing: -0.01em;
+        }
+
+        .field input::placeholder {
+          color: rgba(100, 116, 139, 0.75);
+          font-weight: 600;
         }
 
         .field input:focus,
         .field select:focus {
-          border-color: rgba(37, 99, 235, 0.35);
-          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+          border-color: rgba(37, 99, 235, 0.38);
+          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
         }
 
         .hint {
           font-size: 12.5px;
           color: var(--muted);
-          line-height: 1.5;
+          line-height: 1.55;
           margin-top: 8px;
+          font-weight: 650;
+          letter-spacing: -0.01em;
         }
 
         .notice {
@@ -827,10 +868,11 @@ export default function AdminPage() {
           padding: 12px 14px;
           border: 1px solid var(--line);
           font-size: 13.5px;
-          font-weight: 650;
+          font-weight: 850;
           display: flex;
           gap: 10px;
           align-items: center;
+          letter-spacing: -0.01em;
         }
 
         .noticeOk {
@@ -861,12 +903,16 @@ export default function AdminPage() {
           border-bottom: 1px solid var(--line);
           background: rgba(15, 23, 42, 0.02);
           white-space: nowrap;
+          font-weight: 850;
+          letter-spacing: -0.01em;
         }
         tbody td {
           padding: 12px;
           border-bottom: 1px solid var(--line);
           font-size: 13.5px;
           vertical-align: top;
+          font-weight: 650;
+          letter-spacing: -0.01em;
         }
         tbody tr:hover td {
           background: rgba(37, 99, 235, 0.035);
@@ -933,13 +979,16 @@ export default function AdminPage() {
         .modalHead h3 {
           margin: 0;
           font-size: 16px;
-          letter-spacing: -0.02em;
+          font-weight: 950;
+          letter-spacing: -0.03em;
         }
         .modalHead p {
           margin: 6px 0 0;
           color: var(--muted);
           font-size: 13px;
           line-height: 1.45;
+          font-weight: 650;
+          letter-spacing: -0.01em;
         }
         .modalBody {
           padding: 16px;
@@ -960,13 +1009,14 @@ export default function AdminPage() {
         .miniLabel {
           font-size: 12px;
           color: var(--muted);
-          font-weight: 700;
+          font-weight: 850;
           margin-bottom: 6px;
+          letter-spacing: -0.01em;
         }
         .miniValue {
           font-size: 16px;
-          font-weight: 900;
-          letter-spacing: -0.02em;
+          font-weight: 950;
+          letter-spacing: -0.03em;
         }
         .modalFoot {
           padding: 14px 16px;
@@ -1332,7 +1382,7 @@ export default function AdminPage() {
                                 <td>
                                   <span
                                     className="pill"
-                                    style={{ fontWeight: 800 }}
+                                    style={{ fontWeight: 900 }}
                                   >
                                     {p.type}
                                   </span>
@@ -1352,7 +1402,7 @@ export default function AdminPage() {
                                 <td>
                                   <span
                                     className="pill"
-                                    style={{ fontWeight: 800 }}
+                                    style={{ fontWeight: 900 }}
                                   >
                                     {Number.isFinite(w) ? w : 1}
                                   </span>
@@ -1385,6 +1435,8 @@ export default function AdminPage() {
                                       style={{
                                         fontSize: 12,
                                         color: "var(--muted)",
+                                        fontWeight: 650,
+                                        letterSpacing: "-0.01em",
                                       }}
                                     >
                                       {p.active && sisa > 0 && (w ?? 1) > 0
@@ -1513,7 +1565,7 @@ export default function AdminPage() {
                             <td>
                               <span
                                 className="pill"
-                                style={{ fontWeight: 800 }}
+                                style={{ fontWeight: 900 }}
                               >
                                 {s.kelas}
                               </span>
@@ -1613,7 +1665,7 @@ export default function AdminPage() {
                             <td>
                               <span
                                 className="pill"
-                                style={{ fontWeight: 800 }}
+                                style={{ fontWeight: 900 }}
                               >
                                 {s.kelas}
                               </span>
@@ -1714,7 +1766,7 @@ export default function AdminPage() {
                             ? ""
                             : "pillRed"
                         }`}
-                        style={{ fontWeight: 900 }}
+                        style={{ fontWeight: 950 }}
                       >
                         {currentStatus || "UNKNOWN"}
                       </span>
@@ -1827,7 +1879,7 @@ export default function AdminPage() {
                                       className={`pill ${
                                         isPaid ? "pillGreen" : "pillRed"
                                       }`}
-                                      style={{ fontWeight: 900 }}
+                                      style={{ fontWeight: 950 }}
                                     >
                                       {st || "-"}
                                     </span>
