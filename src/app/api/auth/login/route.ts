@@ -8,7 +8,6 @@ export async function POST(req: Request) {
   const usernameRaw = String(body.username || "").trim();
   const password = String(body.password || "");
 
-  // ✅ login kamu bisa pakai NIS / username apa pun
   const username = usernameRaw.toLowerCase();
 
   if (!username || !password) {
@@ -18,9 +17,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // =====================================================
-  // 1) ✅ Login tabel lama: users_app (TETAP)
-  // =====================================================
+  // 1) login user lama / siswa via users_app (TETAP)
   {
     const { data: user, error } = await supabaseAdmin
       .from("users_app")
@@ -31,22 +28,34 @@ export async function POST(req: Request) {
 
     if (!error && user) {
       const ok = await verifyPassword(password, user.password_hash);
-      if (!ok) {
+      if (!ok)
         return NextResponse.json({ error: "Login gagal" }, { status: 401 });
+
+      // ✅ kalau siswa: ambil branch_id dari students
+      let branch_id: string | null = null;
+      if (String(user.role) === "SISWA" && user.student_id) {
+        const { data: st } = await supabaseAdmin
+          .from("students")
+          .select("branch_id")
+          .eq("id", user.student_id)
+          .maybeSingle();
+
+        branch_id = (st?.branch_id as string) ?? null;
       }
 
       const token = await signSession({
         uid: user.id,
-        role: user.role, // biasanya: SUPER_ADMIN / SISWA
-        studentId: user.student_id ?? null,
+        role: user.role,
+        studentId: user.student_id,
         username: user.username,
-
-        // optional kalau suatu saat kamu butuh
-        branch_id: (user as any)?.branch_id ?? null,
-        name: (user as any)?.name ?? null,
+        branch_id,
       });
 
-      const res = NextResponse.json({ ok: true, role: user.role });
+      const res = NextResponse.json({
+        ok: true,
+        role: user.role,
+      });
+
       res.cookies.set(getSessionCookieName(), token, {
         httpOnly: true,
         sameSite: "lax",
@@ -56,9 +65,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // =====================================================
-  // 2) ✅ Fallback: Login Admin Cabang -> branch_admins
-  // =====================================================
+  // 2) fallback login admin cabang
   {
     const { data: admin, error } = await supabaseAdmin
       .from("branch_admins")
@@ -72,9 +79,8 @@ export async function POST(req: Request) {
     }
 
     const ok = await verifyPassword(password, admin.password_hash);
-    if (!ok) {
+    if (!ok)
       return NextResponse.json({ error: "Login gagal" }, { status: 401 });
-    }
 
     const token = await signSession({
       uid: admin.id,
@@ -82,7 +88,7 @@ export async function POST(req: Request) {
       studentId: null,
       username: admin.username,
       name: admin.name ?? null,
-      branch_id: admin.branch_id ?? null,
+      branch_id: admin.branch_id,
     });
 
     const res = NextResponse.json({ ok: true, role: "ADMIN_CABANG" });

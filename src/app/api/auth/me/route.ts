@@ -1,37 +1,41 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSessionCookieName, verifySession } from "@/lib/auth";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function GET() {
   try {
-    // ✅ Next 15: cookies() async
     const cookieStore = await cookies();
     const token = cookieStore.get(getSessionCookieName())?.value;
 
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!token) return NextResponse.json({ user: null }, { status: 200 });
 
     const session = await verifySession(token);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // ✅ ambil detail cabang kalau ada branch_id
+    let branch: any = null;
+    if (session.branch_id) {
+      const { data } = await supabaseAdmin
+        .from("branches")
+        .select("id, name, code")
+        .eq("id", session.branch_id)
+        .maybeSingle();
+
+      branch = data ?? null;
     }
 
-    // ✅ balikin role + branch_id (kalau ada)
-    return NextResponse.json(
-      {
-        ok: true,
+    return NextResponse.json({
+      user: {
+        uid: session.uid,
         role: session.role,
+        studentId: session.studentId,
+        username: session.username,
+        name: session.name ?? null,
         branch_id: session.branch_id ?? null,
-        username: session.username ?? null,
-        uid: session.uid ?? null,
+        branch,
       },
-      { status: 200 }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Server error" },
-      { status: 500 }
-    );
+    });
+  } catch {
+    return NextResponse.json({ user: null }, { status: 200 });
   }
 }

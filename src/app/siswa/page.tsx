@@ -80,6 +80,13 @@ export default function SiswaPage() {
   const [loading, setLoading] = useState(false);
   const [spinning, setSpinning] = useState(false);
 
+  // ✅ tambahan: info cabang dari /api/auth/me
+  const [branchInfo, setBranchInfo] = useState<{
+    id?: string;
+    name?: string;
+    code?: string;
+  } | null>(null);
+
   // sidebar riwayat pembayaran
   const [payHistory, setPayHistory] = useState<PaymentRow[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -128,6 +135,22 @@ export default function SiswaPage() {
     setPrizes(Array.isArray(d.prizes) ? d.prizes : []);
   }
 
+  // ✅ tambahan: ambil cabang siswa dari session (/api/auth/me)
+  async function loadBranchInfo() {
+    const r = await fetch("/api/auth/me");
+    const j = await r.json().catch(() => ({}));
+    const b = j?.user?.branch || null;
+    if (b && typeof b === "object") {
+      setBranchInfo({
+        id: String(b.id || ""),
+        name: b.name ? String(b.name) : undefined,
+        code: b.code ? String(b.code) : undefined,
+      });
+    } else {
+      setBranchInfo(null);
+    }
+  }
+
   /**
    * ✅ Riwayat pembayaran sukses
    * GET /api/siswa/payments/history -> { ok:true, payments:[...] }
@@ -157,7 +180,12 @@ export default function SiswaPage() {
   }
 
   async function refreshAll() {
-    await Promise.all([loadInvoice(), loadPrizes(), loadPayHistory()]);
+    await Promise.all([
+      loadInvoice(),
+      loadPrizes(),
+      loadPayHistory(),
+      loadBranchInfo(),
+    ]);
   }
 
   async function logout() {
@@ -345,6 +373,15 @@ export default function SiswaPage() {
       };
     });
   }, [prizes, segAngle]);
+
+  // ✅ label cabang untuk ditampilkan
+  const branchLabel = useMemo(() => {
+    const nm = String(branchInfo?.name || "").trim();
+    const cd = String(branchInfo?.code || "").trim();
+    if (!nm && !cd) return "";
+    if (nm && cd) return `${nm} (${cd})`;
+    return nm || cd;
+  }, [branchInfo]);
 
   if (!mounted) return null;
 
@@ -556,6 +593,16 @@ export default function SiswaPage() {
           font-weight: 700;
           letter-spacing: -0.01em;
         }
+
+        /* ✅ baru: baris info cabang */
+        .idBranch {
+          margin-top: 8px;
+          font-size: 12.5px;
+          font-weight: 850;
+          letter-spacing: -0.01em;
+          color: rgba(37, 99, 235, 1);
+        }
+
         .sidePeriod {
           margin-top: 10px;
           font-size: 12.5px;
@@ -1006,6 +1053,13 @@ export default function SiswaPage() {
                   {displayName}
                 </div>
                 <div className="idUser">@{username}</div>
+
+                {/* ✅ Tambahan: info cabang siswa */}
+                {branchLabel ? (
+                  <div className="idBranch" title={branchLabel}>
+                    Siswa Cabang: {branchLabel}
+                  </div>
+                ) : null}
               </div>
             </div>
 
