@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type StudentRow = {
   id: string;
-  username: string; // mapping dari students.nis
-  nama: string; // mapping dari students.nama
+  username: string;
+  nama: string;
   is_active: boolean;
   created_at: string;
 };
@@ -34,6 +34,10 @@ type Payment = {
 
 export default function CabangPage() {
   const router = useRouter();
+
+  // ✅ hydration safe
+  const [mounted, setMounted] = useState(false);
+
   const [tab, setTab] = useState<"siswa" | "pembayaran">("siswa");
 
   const [me, setMe] = useState<any>(null);
@@ -76,7 +80,6 @@ export default function CabangPage() {
     setLoading(false);
     if (!r.ok) return setErr(j?.error || "Gagal ambil data siswa");
 
-    // normalisasi output supaya aman
     const rows = (j?.students ?? []).map((s: any) => ({
       id: String(s.id),
       username: String(s.username ?? s.nis ?? ""),
@@ -117,12 +120,7 @@ export default function CabangPage() {
     const r = await fetch("/api/cabang/students/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username,
-        nama,
-        phone,
-        password,
-      }),
+      body: JSON.stringify({ username, nama, phone, password }),
     });
 
     const j = await r.json().catch(() => ({}));
@@ -157,6 +155,7 @@ export default function CabangPage() {
   }
 
   useEffect(() => {
+    setMounted(true);
     loadMe();
     loadBranchMe();
     loadStudents();
@@ -164,215 +163,593 @@ export default function CabangPage() {
   }, []);
 
   useEffect(() => {
+    if (!mounted) return;
     if (tab === "siswa") loadStudents();
     else loadPayments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
-
-  const title = useMemo(() => {
-    const nm = me?.name ? ` — ${me.name}` : "";
-    return `Panel Admin Cabang${nm}`;
-  }, [me]);
+  }, [tab, mounted]);
 
   const branchLabel = useMemo(() => {
-    if (!branch) return "Login Cabang: (memuat...)";
-    const name = branch?.name || "-";
+    if (!branch) return "";
+    const name = branch?.name || "";
     const code = branch?.code ? ` (${branch.code})` : "";
-    return `Login Cabang: ${name}${code}`;
+    return `${name}${code}`.trim();
   }, [branch]);
 
+  const meName = useMemo(() => {
+    const nm = String(me?.name || "").trim();
+    return nm || "Admin";
+  }, [me]);
+
+  function initialsFromName(name: string) {
+    const n = String(name || "").trim();
+    if (!n) return "A";
+    const parts = n.split(/\s+/).filter(Boolean);
+    const a = parts[0]?.[0] || "";
+    const b = parts.length > 1 ? parts[1]?.[0] || "" : "";
+    return (a + b).toUpperCase() || "A";
+  }
+
+  async function onLogout() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    router.push("/login");
+  }
+
+  if (!mounted) return null;
+
   return (
-    <div>
-      {/* Header */}
-      <div
-        style={{
-          background: "white",
-          borderRadius: 16,
-          padding: 16,
-          boxShadow: "0 8px 30px rgba(0,0,0,.06)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>{title}</div>
-          <div style={{ color: "#667085", marginTop: 4, fontSize: 13 }}>
-            Data yang tampil otomatis terfilter berdasarkan cabang akun ini.
-          </div>
-          <div
-            style={{
-              color: "#1d4ed8",
-              marginTop: 6,
-              fontSize: 13,
-              fontWeight: 800,
-            }}
-          >
-            {branchLabel}
-          </div>
-        </div>
+    <>
+      <style jsx global>{`
+        @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap");
 
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => setTab("siswa")} style={pill(tab === "siswa")}>
-            Siswa
-          </button>
-          <button
-            onClick={() => setTab("pembayaran")}
-            style={pill(tab === "pembayaran")}
-          >
-            Pembayaran
-          </button>
+        :root {
+          --bg: #f6f8fc;
+          --card: #ffffff;
+          --text: #0f172a;
+          --muted: #64748b;
+          --line: rgba(15, 23, 42, 0.08);
+          --brand: #2563eb;
+          --brand2: #1d4ed8;
+          --danger: #ef4444;
+          --shadow: 0 18px 55px rgba(15, 23, 42, 0.1);
+          --radius: 18px;
+        }
 
-          <button
-            onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" }).catch(
-                () => {}
-              );
-              router.push("/login");
-            }}
-            style={{
-              borderRadius: 12,
-              padding: "10px 14px",
-              background: "#fff",
-              border: "1px solid #fecaca",
-              color: "#ef4444",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Logout
-          </button>
-        </div>
-      </div>
+        html,
+        body {
+          background: var(--bg);
+          color: var(--text);
+        }
+        * {
+          box-sizing: border-box;
+        }
 
-      {/* Error */}
-      {err ? (
-        <div
-          style={{
-            marginTop: 14,
-            background: "#fff1f2",
-            border: "1px solid #fecdd3",
-            color: "#9f1239",
-            padding: 12,
-            borderRadius: 12,
-            fontWeight: 600,
-          }}
-        >
-          ⚠️ {err}
-        </div>
-      ) : null}
+        body {
+          font-family: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui,
+            -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial,
+            "Noto Sans", "Liberation Sans", sans-serif;
+          letter-spacing: -0.012em;
+          text-rendering: geometricPrecision;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
 
-      {/* Content */}
-      <div
-        style={{
-          marginTop: 14,
-          background: "white",
-          borderRadius: 16,
-          padding: 16,
-          boxShadow: "0 8px 30px rgba(0,0,0,.06)",
-        }}
-      >
-        {loading ? (
-          <div style={{ padding: 10, color: "#667085" }}>Loading…</div>
-        ) : tab === "siswa" ? (
-          <>
-            {/* Form tambah siswa (sesuai permintaan) */}
-            <div
-              style={{
-                padding: 14,
-                borderRadius: 14,
-                border: "1px solid #e5e7eb",
-                background: "#f9fafb",
-                marginBottom: 14,
-              }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 10 }}>
-                Tambah Siswa Cabang
-              </div>
+        .page {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: 16px;
+          display: grid;
+          grid-template-columns: 300px 1fr;
+          gap: 16px;
+          align-items: start;
+        }
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                  gap: 10,
-                }}
-              >
-                <Field
-                  label="Username"
-                  value={username}
-                  onChange={setUsername}
-                  placeholder="contoh: 0001 / rafi01"
-                />
-                <Field
-                  label="Nama"
-                  value={nama}
-                  onChange={setNama}
-                  placeholder="Nama siswa"
-                />
-                <Field
-                  label="Nomer HP"
-                  value={phone}
-                  onChange={setPhone}
-                  placeholder="contoh: 08123456789"
-                />
-                <Field
-                  label="Password awal"
-                  value={password}
-                  onChange={setPassword}
-                  placeholder="min 6 karakter"
-                  type="password"
-                />
-              </div>
+        .sidebar {
+          position: sticky;
+          top: 16px;
+          background: linear-gradient(180deg, #ffffff, #fbfdff);
+          border: 1px solid var(--line);
+          border-radius: 22px;
+          box-shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
+          overflow: hidden;
+        }
 
-              <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
-                <button
-                  onClick={createStudent}
-                  disabled={saving}
-                  style={{
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    background: "#2563eb",
-                    border: "1px solid #2563eb",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: saving ? "not-allowed" : "pointer",
-                    opacity: saving ? 0.7 : 1,
-                  }}
-                >
-                  {saving ? "Menyimpan..." : "Tambah Siswa"}
-                </button>
+        /* ✅ Sidebar clean header */
+        .sideHead {
+          padding: 14px;
+          border-bottom: 1px solid var(--line);
+          background: radial-gradient(
+              1200px 420px at -20% -30%,
+              rgba(37, 99, 235, 0.14),
+              transparent 60%
+            ),
+            linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.98),
+              rgba(255, 255, 255, 0.92)
+            );
+        }
 
-                <button
-                  onClick={loadStudents}
-                  style={{
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    background: "#fff",
-                    border: "1px solid #e5e7eb",
-                    color: "#111827",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
-                >
-                  Refresh
-                </button>
-              </div>
+        .profile {
+          padding: 12px;
+          border-radius: 18px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.9);
+          display: flex;
+          gap: 12px;
+          align-items: center;
+        }
 
-              <div style={{ marginTop: 8, color: "#667085", fontSize: 12 }}>
-                Catatan: siswa login menggunakan <b>Username</b> di atas.
+        .avatar {
+          width: 44px;
+          height: 44px;
+          border-radius: 16px;
+          display: grid;
+          place-items: center;
+          color: #0b1220;
+          font-weight: 950;
+          background: linear-gradient(
+            135deg,
+            rgba(37, 99, 235, 0.22),
+            rgba(255, 255, 255, 0.9)
+          );
+          border: 1px solid rgba(37, 99, 235, 0.16);
+          box-shadow: 0 14px 30px rgba(37, 99, 235, 0.16);
+          flex: 0 0 auto;
+        }
+
+        .pText {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+        .pName {
+          font-weight: 950;
+          letter-spacing: -0.02em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          line-height: 1.1;
+        }
+        .pRole {
+          font-size: 12px;
+          color: var(--muted);
+          font-weight: 750;
+          line-height: 1.25;
+
+          /* ✅ jangan kepotong */
+          white-space: normal;
+          overflow: visible;
+          text-overflow: initial;
+          word-break: break-word;
+        }
+
+        .sideNav {
+          padding: 12px;
+          display: grid;
+          gap: 10px;
+        }
+
+        .navBtn {
+          width: 100%;
+          text-align: left;
+          padding: 12px 12px 12px 14px;
+          border-radius: 18px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.92);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          position: relative;
+          overflow: hidden;
+          transition: transform 0.06s ease, box-shadow 0.16s ease,
+            border-color 0.16s ease, background 0.16s ease;
+        }
+
+        .navBtn::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(
+            420px 160px at 0% 0%,
+            rgba(37, 99, 235, 0.08),
+            transparent 55%
+          );
+          opacity: 0;
+          transition: opacity 0.18s ease;
+        }
+
+        .navBtn:hover {
+          box-shadow: 0 16px 34px rgba(15, 23, 42, 0.09);
+          border-color: rgba(37, 99, 235, 0.18);
+        }
+        .navBtn:hover::before {
+          opacity: 1;
+        }
+        .navBtn:active {
+          transform: translateY(1px);
+        }
+
+        .navBtnActive {
+          background: rgba(37, 99, 235, 0.09);
+          border-color: rgba(37, 99, 235, 0.22);
+          box-shadow: 0 18px 42px rgba(37, 99, 235, 0.14);
+        }
+        .navBtnActive::before {
+          opacity: 1;
+        }
+        .navBtnActive::after {
+          content: "";
+          position: absolute;
+          left: 8px;
+          top: 10px;
+          bottom: 10px;
+          width: 4px;
+          border-radius: 999px;
+          background: linear-gradient(
+            180deg,
+            rgba(37, 99, 235, 1),
+            rgba(29, 78, 216, 1)
+          );
+          box-shadow: 0 10px 20px rgba(37, 99, 235, 0.25);
+        }
+
+        .navLeft {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .navIcon {
+          width: 34px;
+          height: 34px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.92);
+          box-shadow: 0 12px 22px rgba(15, 23, 42, 0.06);
+          flex: 0 0 auto;
+        }
+        .navTitle {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-width: 0;
+        }
+        .navTitle b {
+          font-size: 13.5px;
+          font-weight: 950;
+          letter-spacing: -0.02em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .navTitle span {
+          font-size: 12px;
+          color: rgba(100, 116, 139, 1);
+          font-weight: 700;
+          letter-spacing: -0.01em;
+        }
+
+        .count {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 30px;
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+          color: rgba(37, 99, 235, 1);
+          background: rgba(37, 99, 235, 0.1);
+          border: 1px solid rgba(37, 99, 235, 0.16);
+        }
+
+        .sideFooter {
+          padding: 12px;
+          border-top: 1px solid var(--line);
+          display: grid;
+          gap: 10px;
+        }
+
+        .btn {
+          height: 42px;
+          padding: 0 12px;
+          border-radius: 14px;
+          border: 1px solid var(--line);
+          background: #fff;
+          color: var(--text);
+          font-size: 13px;
+          font-weight: 900;
+          letter-spacing: -0.01em;
+          cursor: pointer;
+          transition: transform 0.05s ease, box-shadow 0.15s ease,
+            border-color 0.15s ease;
+        }
+        .btn:hover {
+          box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+        }
+        .btn:active {
+          transform: translateY(1px);
+        }
+        .btnDanger {
+          border-color: rgba(239, 68, 68, 0.35);
+          color: var(--danger);
+          background: #fff;
+        }
+        .btnDanger:hover {
+          box-shadow: 0 10px 24px rgba(239, 68, 68, 0.12);
+        }
+
+        .content {
+          min-width: 0;
+          display: grid;
+          gap: 14px;
+        }
+        .card {
+          background: var(--card);
+          border: 1px solid var(--line);
+          border-radius: var(--radius);
+          box-shadow: var(--shadow);
+          padding: 16px;
+        }
+
+        .h1 {
+          margin: 0;
+          font-size: 18px;
+          font-weight: 950;
+          letter-spacing: -0.03em;
+        }
+        .p {
+          margin: 6px 0 0;
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.55;
+        }
+
+        .notice {
+          margin-top: 12px;
+          background: #fff1f2;
+          border: 1px solid #fecdd3;
+          color: #9f1239;
+          padding: 12px;
+          border-radius: 14px;
+          font-weight: 800;
+        }
+
+        .formGrid {
+          display: grid;
+          gap: 10px;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        @media (max-width: 980px) {
+          .page {
+            grid-template-columns: 1fr;
+          }
+          .sidebar {
+            position: relative;
+            top: 0;
+          }
+          .formGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 560px) {
+          .formGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+
+      <div className="page">
+        {/* ===== Sidebar ===== */}
+        <aside className="sidebar">
+          {/* ✅ CLEAN HEADER: cuma avatar + nama */}
+          <div className="sideHead">
+            <div className="profile">
+              <div className="avatar">{initialsFromName(meName)}</div>
+              <div className="pText">
+                <div className="pName" title={meName}>
+                  {meName}
+                </div>
+                <div className="pRole">Admin Cabang</div>
               </div>
             </div>
+          </div>
 
-            <StudentsTable
-              rows={students}
-              onRowClick={(id) => openDetail(id)}
-            />
-          </>
-        ) : (
-          <PaymentsTable rows={payments} onApprove={approve} />
-        )}
+          <div className="sideNav">
+            <button
+              onClick={() => setTab("siswa")}
+              className={`navBtn ${tab === "siswa" ? "navBtnActive" : ""}`}
+              type="button"
+            >
+              <div className="navLeft">
+                <div className="navIcon">👩‍🎓</div>
+                <div className="navTitle">
+                  <b>Siswa</b>
+                  <span>Tambah & kelola siswa</span>
+                </div>
+              </div>
+              <span className="count">{students.length}</span>
+            </button>
+
+            <button
+              onClick={() => setTab("pembayaran")}
+              className={`navBtn ${tab === "pembayaran" ? "navBtnActive" : ""}`}
+              type="button"
+            >
+              <div className="navLeft">
+                <div className="navIcon">💳</div>
+                <div className="navTitle">
+                  <b>Pembayaran</b>
+                  <span>Approve / Reject</span>
+                </div>
+              </div>
+              <span className="count">{payments.length}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (tab === "siswa") loadStudents();
+                else loadPayments();
+              }}
+              className="btn"
+              type="button"
+            >
+              {loading ? "Memuat..." : "Refresh"}
+            </button>
+          </div>
+
+          <div className="sideFooter">
+            <button className="btn btnDanger" onClick={onLogout} type="button">
+              Logout
+            </button>
+          </div>
+        </aside>
+
+        {/* ===== Content ===== */}
+        <main className="content">
+          {err ? <div className="notice">⚠️ {err}</div> : null}
+
+          <div className="card">
+            {loading ? (
+              <div style={{ padding: 10, color: "#667085", fontWeight: 800 }}>
+                Loading…
+              </div>
+            ) : tab === "siswa" ? (
+              <>
+                <div className="h1">Tambah & Kelola Siswa</div>
+                <div className="p">
+                  Buat akun siswa untuk cabang ini. Siswa login menggunakan{" "}
+                  <b>Username</b>.
+                </div>
+
+                {/* Form tambah siswa */}
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: 14,
+                    borderRadius: 16,
+                    border: "1px solid #e5e7eb",
+                    background: "#f9fafb",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 14.5,
+                      fontWeight: 950,
+                      marginBottom: 10,
+                      letterSpacing: "-0.02em",
+                    }}
+                  >
+                    Tambah Siswa Cabang
+                  </div>
+
+                  <div className="formGrid">
+                    <Field
+                      label="Username"
+                      value={username}
+                      onChange={setUsername}
+                      placeholder="contoh: 0001 / rafi01"
+                    />
+                    <Field
+                      label="Nama"
+                      value={nama}
+                      onChange={setNama}
+                      placeholder="Nama siswa"
+                    />
+                    <Field
+                      label="Nomer HP"
+                      value={phone}
+                      onChange={setPhone}
+                      placeholder="contoh: 08123456789"
+                    />
+                    <Field
+                      label="Password awal"
+                      value={password}
+                      onChange={setPassword}
+                      placeholder="min 6 karakter"
+                      type="password"
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 12,
+                      display: "flex",
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      onClick={createStudent}
+                      disabled={saving}
+                      style={{
+                        borderRadius: 12,
+                        padding: "10px 14px",
+                        background: "#2563eb",
+                        border: "1px solid #2563eb",
+                        color: "white",
+                        fontWeight: 950,
+                        cursor: saving ? "not-allowed" : "pointer",
+                        opacity: saving ? 0.7 : 1,
+                      }}
+                    >
+                      {saving ? "Menyimpan..." : "Tambah Siswa"}
+                    </button>
+
+                    <button
+                      onClick={loadStudents}
+                      style={{
+                        borderRadius: 12,
+                        padding: "10px 14px",
+                        background: "#fff",
+                        border: "1px solid #e5e7eb",
+                        color: "#111827",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Refresh Data
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 8,
+                      color: "#667085",
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Catatan: siswa login menggunakan <b>Username</b> di atas.
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <StudentsTable rows={students} onRowClick={openDetail} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="h1">Approval Pembayaran Cabang</div>
+                <div className="p">
+                  Kelola pembayaran siswa pada cabang ini.
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <PaymentsTable rows={payments} onApprove={approve} />
+                </div>
+              </>
+            )}
+          </div>
+        </main>
       </div>
 
       {/* Modal detail */}
@@ -412,7 +789,15 @@ export default function CabangPage() {
                 gap: 10,
               }}
             >
-              <div style={{ fontWeight: 900, fontSize: 16 }}>Detail Siswa</div>
+              <div
+                style={{
+                  fontWeight: 950,
+                  fontSize: 16,
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                Detail Siswa
+              </div>
               <button
                 onClick={() => setOpen(false)}
                 style={{
@@ -420,7 +805,7 @@ export default function CabangPage() {
                   padding: "8px 10px",
                   background: "#fff",
                   border: "1px solid #e5e7eb",
-                  fontWeight: 800,
+                  fontWeight: 900,
                   cursor: "pointer",
                 }}
               >
@@ -430,9 +815,11 @@ export default function CabangPage() {
 
             <div style={{ padding: 14 }}>
               {detailLoading ? (
-                <div style={{ color: "#667085" }}>Memuat detail…</div>
+                <div style={{ color: "#667085", fontWeight: 800 }}>
+                  Memuat detail…
+                </div>
               ) : !detail ? (
-                <div style={{ color: "#9f1239", fontWeight: 700 }}>
+                <div style={{ color: "#9f1239", fontWeight: 900 }}>
                   Detail tidak tersedia.
                 </div>
               ) : (
@@ -458,7 +845,7 @@ export default function CabangPage() {
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -475,10 +862,10 @@ function InfoRow({ label, value }: { label: string; value: string }) {
         background: "#fafafa",
       }}
     >
-      <div style={{ color: "#475569", fontWeight: 900, fontSize: 13 }}>
+      <div style={{ color: "#475569", fontWeight: 950, fontSize: 13 }}>
         {label}
       </div>
-      <div style={{ fontWeight: 800, color: "#111827" }}>{value}</div>
+      <div style={{ fontWeight: 900, color: "#111827" }}>{value}</div>
     </div>
   );
 }
@@ -501,7 +888,7 @@ function Field({
       <div
         style={{
           fontSize: 12,
-          fontWeight: 800,
+          fontWeight: 900,
           color: "#475569",
           marginBottom: 6,
         }}
@@ -519,24 +906,12 @@ function Field({
           padding: "10px 12px",
           border: "1px solid #e5e7eb",
           outline: "none",
-          fontWeight: 700,
+          fontWeight: 800,
           background: "white",
         }}
       />
     </div>
   );
-}
-
-function pill(active: boolean): React.CSSProperties {
-  return {
-    borderRadius: 12,
-    padding: "10px 14px",
-    background: active ? "#2563eb" : "#fff",
-    border: active ? "1px solid #2563eb" : "1px solid #e5e7eb",
-    color: active ? "white" : "#111827",
-    fontWeight: 800,
-    cursor: "pointer",
-  };
 }
 
 function StudentsTable({
@@ -548,12 +923,21 @@ function StudentsTable({
 }) {
   return (
     <div>
-      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 10 }}>
+      <div
+        style={{
+          fontSize: 16,
+          fontWeight: 950,
+          marginBottom: 10,
+          letterSpacing: "-0.02em",
+        }}
+      >
         Daftar Siswa Cabang
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table
+          style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}
+        >
           <thead>
             <tr style={{ textAlign: "left", color: "#667085", fontSize: 13 }}>
               <th style={th}>Username</th>
@@ -564,7 +948,10 @@ function StudentsTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={3} style={{ padding: 14, color: "#667085" }}>
+                <td
+                  colSpan={3}
+                  style={{ padding: 14, color: "#667085", fontWeight: 800 }}
+                >
                   Belum ada siswa untuk cabang ini.
                 </td>
               </tr>
@@ -592,7 +979,14 @@ function StudentsTable({
         </table>
       </div>
 
-      <div style={{ marginTop: 8, color: "#667085", fontSize: 12 }}>
+      <div
+        style={{
+          marginTop: 8,
+          color: "#667085",
+          fontSize: 12,
+          fontWeight: 700,
+        }}
+      >
         Tips: klik baris siswa untuk melihat detail.
       </div>
     </div>
@@ -608,12 +1002,21 @@ function PaymentsTable({
 }) {
   return (
     <div>
-      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 10 }}>
-        Approval Pembayaran Cabang
+      <div
+        style={{
+          fontSize: 16,
+          fontWeight: 950,
+          marginBottom: 10,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        Data Pembayaran
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table
+          style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}
+        >
           <thead>
             <tr style={{ textAlign: "left", color: "#667085", fontSize: 13 }}>
               <th style={th}>NIS</th>
@@ -626,7 +1029,10 @@ function PaymentsTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: 14, color: "#667085" }}>
+                <td
+                  colSpan={5}
+                  style={{ padding: 14, color: "#667085", fontWeight: 800 }}
+                >
                   Belum ada data pembayaran untuk cabang ini.
                 </td>
               </tr>
@@ -646,7 +1052,7 @@ function PaymentsTable({
                     </span>
                   </td>
                   <td style={td}>
-                    <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
                         onClick={() => onApprove(p.id, "APPROVED")}
                         style={btnGreen}
@@ -671,9 +1077,13 @@ function PaymentsTable({
   );
 }
 
-const th: React.CSSProperties = { padding: 10, fontWeight: 700 };
-const td: React.CSSProperties = { padding: 10, color: "#111827" };
-const tdStrong: React.CSSProperties = { padding: 10, fontWeight: 800 };
+const th: React.CSSProperties = { padding: 10, fontWeight: 800 };
+const td: React.CSSProperties = {
+  padding: 10,
+  color: "#111827",
+  fontWeight: 750,
+};
+const tdStrong: React.CSSProperties = { padding: 10, fontWeight: 950 };
 
 function badge(kind: string): React.CSSProperties {
   const k = kind.toLowerCase();
@@ -681,9 +1091,10 @@ function badge(kind: string): React.CSSProperties {
     display: "inline-block",
     padding: "6px 10px",
     borderRadius: 999,
-    fontWeight: 800,
+    fontWeight: 900,
     fontSize: 12,
     border: "1px solid transparent",
+    letterSpacing: "-0.01em",
   };
 
   if (k.includes("approve") || k === "aktif") {
@@ -715,11 +1126,10 @@ const btnGreen: React.CSSProperties = {
   padding: "8px 10px",
   border: "1px solid #bbf7d0",
   background: "#ecfdf5",
-  means: undefined,
   color: "#065f46",
-  fontWeight: 800,
+  fontWeight: 900,
   cursor: "pointer",
-} as any;
+};
 
 const btnRed: React.CSSProperties = {
   borderRadius: 10,
@@ -727,6 +1137,6 @@ const btnRed: React.CSSProperties = {
   border: "1px solid #fecaca",
   background: "#fff1f2",
   color: "#9f1239",
-  fontWeight: 800,
+  fontWeight: 900,
   cursor: "pointer",
 };

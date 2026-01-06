@@ -87,6 +87,12 @@ export default function SiswaPage() {
     code?: string;
   } | null>(null);
 
+  // ✅ tambahan: info user login dari /api/auth/me (biar nama muncul walau invoice error)
+  const [userInfo, setUserInfo] = useState<{
+    username?: string;
+    name?: string;
+  } | null>(null);
+
   // sidebar riwayat pembayaran
   const [payHistory, setPayHistory] = useState<PaymentRow[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -135,18 +141,32 @@ export default function SiswaPage() {
     setPrizes(Array.isArray(d.prizes) ? d.prizes : []);
   }
 
-  // ✅ tambahan: ambil cabang siswa dari session (/api/auth/me)
-  async function loadBranchInfo() {
+  // ✅ ambil user + cabang dari session
+  async function loadMe() {
     const r = await fetch("/api/auth/me");
     const j = await r.json().catch(() => ({}));
-    const b = j?.user?.branch || null;
-    if (b && typeof b === "object") {
-      setBranchInfo({
-        id: String(b.id || ""),
-        name: b.name ? String(b.name) : undefined,
-        code: b.code ? String(b.code) : undefined,
+
+    // user info
+    const u = j?.user || null;
+    if (u && typeof u === "object") {
+      setUserInfo({
+        username: u.username ? String(u.username) : undefined,
+        name: u.name ? String(u.name) : undefined,
       });
+
+      // branch info
+      const b = u.branch || null;
+      if (b && typeof b === "object") {
+        setBranchInfo({
+          id: String(b.id || ""),
+          name: b.name ? String(b.name) : undefined,
+          code: b.code ? String(b.code) : undefined,
+        });
+      } else {
+        setBranchInfo(null);
+      }
     } else {
+      setUserInfo(null);
       setBranchInfo(null);
     }
   }
@@ -181,10 +201,10 @@ export default function SiswaPage() {
 
   async function refreshAll() {
     await Promise.all([
+      loadMe(),
       loadInvoice(),
       loadPrizes(),
       loadPayHistory(),
-      loadBranchInfo(),
     ]);
   }
 
@@ -246,29 +266,32 @@ export default function SiswaPage() {
   const inv = data?.invoice;
   const period = data?.period;
 
-  // ✅ Ambil username & nama asli siswa dari response kamu (student.name / student.raw.nama)
+  // ✅ Username: PRIORITAS dari /api/auth/me -> fallback dari data invoice
   const username =
     String(
-      data?.session?.username ||
+      userInfo?.username ||
+        data?.session?.username ||
         data?.user?.username ||
         data?.student?.raw?.nis ||
         data?.student?.nis ||
         ""
     ).trim() || "-";
 
+  // ✅ Nama: PRIORITAS dari /api/auth/me -> fallback dari data invoice
   const studentName =
     String(
-      data?.student?.name ||
+      userInfo?.name ||
+        data?.student?.name ||
         data?.student?.raw?.nama ||
         data?.student?.nama ||
         ""
     ).trim() || "";
 
-  // ✅ displayName: PRIORITAS nama siswa asli, baru fallback username
+  // ✅ displayName: nama asli dulu, baru username
   const displayName = (studentName || username || "-").trim() || "-";
 
   // =========================
-  // ✅ FITUR BAYAR (BARU)
+  // ✅ FITUR BAYAR
   // =========================
   const [payOpen, setPayOpen] = useState(false);
   const [payMethod, setPayMethod] = useState("TRANSFER");
@@ -348,24 +371,19 @@ export default function SiswaPage() {
     }
   }
 
-  // =========================
-
   // ✅ labels wheel (rapi & lurus/horizontal)
   const wheelLabels = useMemo(() => {
     const items = prizes.length ? prizes : [];
-    // default label kalau prize kosong (biar tidak error)
     if (!items.length) return [];
 
     const clamp = (t: string) => {
       const s = safeLabel(t);
-      // biar gak kepanjangan
       if (s.length > 14) return s.slice(0, 12) + "…";
       return s;
     };
 
-    // kita taruh label di tengah tiap segmen
     return items.map((p, idx) => {
-      const angle = idx * segAngle + segAngle / 2; // derajat dari atas (conic-gradient default 0deg di kanan),
+      const angle = idx * segAngle + segAngle / 2;
       return {
         id: p.id,
         text: clamp(p.label),
@@ -383,12 +401,13 @@ export default function SiswaPage() {
     return nm || cd;
   }, [branchInfo]);
 
+  const paid = String(inv?.status || "").toUpperCase() === "PAID";
+
   if (!mounted) return null;
 
   return (
     <>
       <style jsx global>{`
-        /* ✅ Font sama persis seperti Login & Admin */
         @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap");
 
         :root {
@@ -426,6 +445,7 @@ export default function SiswaPage() {
             "cv11" 1;
         }
 
+        /* ===================== Topbar ===================== */
         .topbar {
           position: sticky;
           top: 0;
@@ -447,8 +467,8 @@ export default function SiswaPage() {
           display: flex;
           align-items: center;
           gap: 12px;
+          min-width: 0;
         }
-
         .logoImg {
           width: 44px;
           height: 44px;
@@ -459,16 +479,19 @@ export default function SiswaPage() {
           box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
           flex: 0 0 auto;
         }
-
         .brandTitle {
           display: flex;
           flex-direction: column;
           line-height: 1.05;
+          min-width: 0;
         }
         .brandTitle b {
           font-size: 15.5px;
           letter-spacing: -0.03em;
           font-weight: 900;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .brandTitle span {
           font-size: 12px;
@@ -481,6 +504,8 @@ export default function SiswaPage() {
           display: flex;
           align-items: center;
           gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
         }
 
         .btn {
@@ -526,153 +551,291 @@ export default function SiswaPage() {
           box-shadow: none !important;
         }
 
+        /* ===================== Layout ===================== */
         .layout {
           max-width: 1400px;
           margin: 0 auto;
           padding: 16px;
           display: grid;
-          grid-template-columns: 280px 1fr;
+          grid-template-columns: minmax(260px, 320px) 1fr;
           gap: 16px;
           align-items: start;
         }
 
+        /* ===================== Sidebar ===================== */
         .sidebar {
           position: sticky;
           top: 76px;
-          background: var(--card);
-          border: 1px solid var(--line);
-          border-radius: var(--radius);
-          box-shadow: var(--shadow);
+          background: linear-gradient(180deg, #ffffff, #fbfdff);
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          border-radius: 22px;
+          box-shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
           overflow: hidden;
         }
 
-        /* ✅ CARD IDENTITAS SISWA */
         .idCard {
-          padding: 14px 14px 12px;
-          border-bottom: 1px solid var(--line);
-          background: linear-gradient(
-            180deg,
-            rgba(37, 99, 235, 0.06),
-            rgba(255, 255, 255, 0.8)
-          );
+          padding: 14px;
+          border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+          background: radial-gradient(
+              1200px 420px at -20% -30%,
+              rgba(37, 99, 235, 0.16),
+              transparent 60%
+            ),
+            radial-gradient(
+              700px 320px at 110% 0%,
+              rgba(34, 197, 94, 0.12),
+              transparent 55%
+            ),
+            linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.98),
+              rgba(255, 255, 255, 0.9)
+            );
         }
+
         .idRow {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 12px;
         }
+
         .avatar {
-          width: 38px;
-          height: 38px;
-          border-radius: 14px;
+          width: 42px;
+          height: 42px;
+          border-radius: 16px;
           display: grid;
           place-items: center;
-          background: rgba(37, 99, 235, 0.1);
-          color: rgba(37, 99, 235, 1);
-          border: 1px solid rgba(37, 99, 235, 0.15);
+          color: #0b1220;
           font-weight: 950;
           letter-spacing: -0.02em;
+          background: linear-gradient(
+            135deg,
+            rgba(37, 99, 235, 0.22),
+            rgba(255, 255, 255, 0.85)
+          );
+          border: 1px solid rgba(37, 99, 235, 0.16);
+          box-shadow: 0 14px 30px rgba(37, 99, 235, 0.18);
+          flex: 0 0 auto;
         }
+
         .idText {
           min-width: 0;
           display: grid;
-          gap: 2px;
+          gap: 3px;
         }
         .idName {
-          font-size: 14px;
+          font-size: 14.5px;
           font-weight: 950;
           letter-spacing: -0.02em;
-          line-height: 1.1;
+          line-height: 1.12;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
         .idUser {
           font-size: 12px;
-          color: var(--muted);
-          font-weight: 700;
+          color: rgba(100, 116, 139, 1);
+          font-weight: 750;
           letter-spacing: -0.01em;
         }
 
-        /* ✅ baru: baris info cabang */
         .idBranch {
           margin-top: 8px;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 7px 10px;
+          border-radius: 999px;
           font-size: 12.5px;
-          font-weight: 850;
+          font-weight: 900;
           letter-spacing: -0.01em;
           color: rgba(37, 99, 235, 1);
+          background: rgba(37, 99, 235, 0.08);
+          border: 1px solid rgba(37, 99, 235, 0.14);
+
+          /* ✅ penting biar tidak kepotong */
+          max-width: 100%;
+          white-space: normal; /* sebelumnya: nowrap */
+          overflow: visible; /* sebelumnya: hidden */
+          text-overflow: unset; /* sebelumnya: ellipsis */
+          line-height: 1.25;
         }
 
         .sidePeriod {
           margin-top: 10px;
+          padding: 10px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.8);
           font-size: 12.5px;
-          color: var(--muted);
-          font-weight: 650;
+          color: rgba(100, 116, 139, 1);
+          font-weight: 750;
           letter-spacing: -0.01em;
         }
         .sidePeriod b {
-          color: var(--text);
-          font-weight: 900;
+          color: rgba(15, 23, 42, 1);
+          font-weight: 950;
         }
 
         .sideNav {
-          padding: 10px;
+          padding: 12px;
           display: grid;
-          gap: 8px;
+          gap: 10px;
         }
+
         .navBtn {
           width: 100%;
           text-align: left;
-          padding: 12px 12px;
-          border-radius: 14px;
-          border: 1px solid var(--line);
-          background: #fff;
+          padding: 12px 12px 12px 14px;
+          border-radius: 18px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.92);
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          transition: box-shadow 0.15s ease, border-color 0.15s ease,
-            background 0.15s ease;
+          position: relative;
+          overflow: hidden;
+          transition: transform 0.06s ease, box-shadow 0.16s ease,
+            border-color 0.16s ease, background 0.16s ease;
+        }
+
+        .navBtn::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(
+            420px 160px at 0% 0%,
+            rgba(37, 99, 235, 0.08),
+            transparent 55%
+          );
+          opacity: 0;
+          transition: opacity 0.18s ease;
         }
         .navBtn:hover {
-          box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
-        }
-        .navBtnActive {
-          background: rgba(37, 99, 235, 0.08);
+          box-shadow: 0 16px 34px rgba(15, 23, 42, 0.09);
           border-color: rgba(37, 99, 235, 0.18);
         }
+        .navBtn:hover::before {
+          opacity: 1;
+        }
+        .navBtn:active {
+          transform: translateY(1px);
+        }
+
+        .navBtnActive {
+          background: rgba(37, 99, 235, 0.09);
+          border-color: rgba(37, 99, 235, 0.22);
+          box-shadow: 0 18px 42px rgba(37, 99, 235, 0.14);
+        }
+        .navBtnActive::before {
+          opacity: 1;
+        }
+        .navBtnActive::after {
+          content: "";
+          position: absolute;
+          left: 8px;
+          top: 10px;
+          bottom: 10px;
+          width: 4px;
+          border-radius: 999px;
+          background: linear-gradient(
+            180deg,
+            rgba(37, 99, 235, 1),
+            rgba(29, 78, 216, 1)
+          );
+          box-shadow: 0 10px 20px rgba(37, 99, 235, 0.25);
+        }
+
+        .navIcon {
+          width: 34px;
+          height: 34px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.92);
+          box-shadow: 0 12px 22px rgba(15, 23, 42, 0.06);
+          flex: 0 0 auto;
+        }
+
         .navTitle {
           display: flex;
           flex-direction: column;
           gap: 2px;
+          min-width: 0;
         }
         .navTitle b {
           font-size: 13.5px;
-          font-weight: 900;
+          font-weight: 950;
           letter-spacing: -0.02em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .navTitle span {
           font-size: 12px;
-          color: var(--muted);
-          font-weight: 650;
+          color: rgba(100, 116, 139, 1);
+          font-weight: 700;
           letter-spacing: -0.01em;
         }
 
         .pill {
           display: inline-flex;
           align-items: center;
+          gap: 6px;
           padding: 6px 10px;
           border-radius: 999px;
-          background: rgba(37, 99, 235, 0.08);
-          color: rgba(37, 99, 235, 1);
-          border: 1px solid rgba(37, 99, 235, 0.12);
           font-size: 12px;
-          font-weight: 900;
+          font-weight: 950;
           white-space: nowrap;
           letter-spacing: -0.01em;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.9);
+          flex: 0 0 auto;
+        }
+        .pillDot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: rgba(148, 163, 184, 1);
+        }
+        .pillOk {
+          color: rgba(22, 163, 74, 1);
+          border-color: rgba(34, 197, 94, 0.22);
+          background: rgba(34, 197, 94, 0.1);
+        }
+        .pillOk .pillDot {
+          background: rgba(34, 197, 94, 1);
+        }
+        .pillWarn {
+          color: rgba(180, 83, 9, 1);
+          border-color: rgba(245, 158, 11, 0.22);
+          background: rgba(245, 158, 11, 0.1);
+        }
+        .pillWarn .pillDot {
+          background: rgba(245, 158, 11, 1);
         }
 
+        .countBadge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 34px;
+          height: 30px;
+          padding: 0 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+          color: rgba(37, 99, 235, 1);
+          background: rgba(37, 99, 235, 0.1);
+          border: 1px solid rgba(37, 99, 235, 0.16);
+          flex: 0 0 auto;
+        }
+
+        /* ===================== Content ===================== */
         .content {
           min-width: 0;
           display: grid;
@@ -839,8 +1002,6 @@ export default function SiswaPage() {
           z-index: 1;
         }
 
-        /* ✅ Overlay label (lurus & rapi) */
-        /* ✅ labels ikut muter bareng wheel */
         .wheelLabels {
           position: absolute;
           inset: 0;
@@ -848,8 +1009,6 @@ export default function SiswaPage() {
           place-items: center;
           pointer-events: none;
           z-index: 3;
-
-          /* ikut rotasi wheel */
           transform: rotate(var(--rot, 0deg));
           transition: transform var(--dur, 600ms) cubic-bezier(0.1, 0.8, 0.1, 1);
         }
@@ -992,8 +1151,10 @@ export default function SiswaPage() {
           display: flex;
           justify-content: flex-end;
           gap: 10px;
+          flex-wrap: wrap;
         }
 
+        /* ===================== Responsive ===================== */
         @media (max-width: 980px) {
           .layout {
             grid-template-columns: 1fr;
@@ -1007,6 +1168,40 @@ export default function SiswaPage() {
           }
           .grid2 {
             grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 560px) {
+          .topbarInner {
+            align-items: flex-start;
+          }
+          .actions {
+            width: 100%;
+            justify-content: flex-start;
+          }
+          .btn {
+            width: 100%;
+          }
+
+          /* Sidebar jadi top panel dan menu 2 kolom */
+          .sideNav {
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+          }
+          .navBtn {
+            padding: 12px;
+          }
+          .navBtnActive::after {
+            left: 6px;
+          }
+          .navIcon {
+            width: 32px;
+            height: 32px;
+            border-radius: 12px;
+          }
+          .pill,
+          .countBadge {
+            display: none; /* biar gak sempit di hp */
           }
         }
       `}</style>
@@ -1044,20 +1239,19 @@ export default function SiswaPage() {
 
       <div className="layout">
         <aside className="sidebar">
-          {/* ✅ IDENTITAS SISWA (nama + username) */}
           <div className="idCard">
             <div className="idRow">
               <div className="avatar">{initialsFromName(displayName)}</div>
+
               <div className="idText">
                 <div className="idName" title={displayName}>
                   {displayName}
                 </div>
                 <div className="idUser">@{username}</div>
 
-                {/* ✅ Tambahan: info cabang siswa */}
                 {branchLabel ? (
                   <div className="idBranch" title={branchLabel}>
-                    Siswa Cabang: {branchLabel}
+                    🏫 Siswa Cabang: {branchLabel}
                   </div>
                 ) : null}
               </div>
@@ -1074,12 +1268,24 @@ export default function SiswaPage() {
               onClick={() => setMenu("BAYAR")}
               type="button"
             >
-              <div className="navTitle">
-                <b>Bayar SPP</b>
-                <span>Tagihan + Lucky Spin</span>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  minWidth: 0,
+                }}
+              >
+                <div className="navIcon">💳</div>
+                <div className="navTitle">
+                  <b>Bayar SPP</b>
+                  <span>Tagihan + Lucky Spin</span>
+                </div>
               </div>
-              <span className="pill">
-                {inv?.status === "PAID" ? "PAID" : "UNPAID"}
+
+              <span className={`pill ${paid ? "pillOk" : "pillWarn"}`}>
+                <span className="pillDot" />
+                {paid ? "PAID" : "UNPAID"}
               </span>
             </button>
 
@@ -1088,11 +1294,22 @@ export default function SiswaPage() {
               onClick={() => setMenu("RIWAYAT")}
               type="button"
             >
-              <div className="navTitle">
-                <b>Riwayat Pembayaran</b>
-                <span>Data pembayaran sukses</span>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  minWidth: 0,
+                }}
+              >
+                <div className="navIcon">🧾</div>
+                <div className="navTitle">
+                  <b>Riwayat Pembayaran</b>
+                  <span>Data pembayaran sukses</span>
+                </div>
               </div>
-              <span className="pill">{payHistory.length} item</span>
+
+              <span className="countBadge">{payHistory.length}</span>
             </button>
           </div>
         </aside>
@@ -1145,7 +1362,14 @@ export default function SiswaPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      marginTop: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
                     <button
                       className="btn btnPrimary"
                       onClick={openPay}
@@ -1203,7 +1427,6 @@ export default function SiswaPage() {
                         <div className="wheelStage">
                           <div className="pointer" />
 
-                          {/* wheel */}
                           <div
                             className="wheel"
                             style={
@@ -1215,7 +1438,6 @@ export default function SiswaPage() {
                             }
                           />
 
-                          {/* ✅ labels overlay (lurus) */}
                           {wheelLabels.length ? (
                             <div
                               className="wheelLabels"
@@ -1229,10 +1451,7 @@ export default function SiswaPage() {
                               }
                             >
                               {wheelLabels.map((it) => {
-                                // radius posisi label (atur biar pas)
-                                const radius = 84; // px dari pusat
-                                // conic-gradient 0deg di kanan, sedangkan pointer kamu di atas,
-                                // kita geser -90deg biar label “naik” ke posisi yang tepat.
+                                const radius = 84;
                                 const a = it.angle - 90;
                                 return (
                                   <div

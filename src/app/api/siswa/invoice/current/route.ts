@@ -53,6 +53,25 @@ export async function GET() {
   // cukup biarkan student null
   const studentData = s?.error ? null : s?.data || null;
 
+  const branchId = String((u.data as any)?.branch_id || "").trim();
+
+  // kalau users_app tidak punya branch_id, fallback ke students.branch_id
+  const branchFromStudent = String(
+    (studentData as any)?.branch_id || ""
+  ).trim();
+
+  const finalBranchId = branchId || branchFromStudent;
+
+  if (!finalBranchId) {
+    return NextResponse.json(
+      {
+        error:
+          "branch_id tidak ditemukan untuk akun ini (cek users_app/students)",
+      },
+      { status: 500 }
+    );
+  }
+
   const data = await getOrCreateInvoice(session.studentId);
 
   return NextResponse.json({
